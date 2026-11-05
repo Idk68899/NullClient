@@ -28,6 +28,13 @@ public final class AIKeys {
     public static final Key<Integer> ACTIONS = Key.of("actions", Integer.class);
     public static final Key<Float> YAW = Key.of("yaw", Float.class);
     public static final Key<Float> PITCH = Key.of("pitch", Float.class);
+    public static final Key<BlockPos> TARGET = Key.of("target", BlockPos.class);
+    public static final Key<BlockPos> LAST_BROKEN = Key.of("lastBroken", BlockPos.class);
+    public static final Key<String> MINE_BLOCK = Key.of("mineBlock", String.class);
+    public static final Key<Integer> MINE_COUNT = Key.of("mineCount", Integer.class);
+    public static final Key<Integer> MINED = Key.of("mined", Integer.class);
+    public static final Key<Integer> COLLECT = Key.of("collect", Integer.class);
+    public static final Key<Boolean> BREAKING = Key.of("breaking", Boolean.class);
 
     public static void addActions(Blackboard bb, int bits) {
         bb.set(ACTIONS, bb.getOrDefault(ACTIONS, 0) | bits);

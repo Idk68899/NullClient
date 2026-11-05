@@ -36,7 +36,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
 
-/** Turns planner steps into behavior-tree nodes: gather, craft (inventory grid or crafting table), smelt. */
+/**
+ * Turns planner steps into behavior-tree nodes: gather, craft (inventory grid or crafting table), and
+ * furnace work split into load (start cooking, then leave) and collect (come back for the output).
+ */
 public final class StepTasks {
     private static final double REACH = 4.0;
 
@@ -58,7 +61,8 @@ public final class StepTasks {
         return switch (s.kind()) {
             case GATHER -> gather(s);
             case CRAFT -> craft(s);
-            case SMELT -> smelt(s);
+            case SMELT_START -> smeltStart(s);
+            case SMELT_COLLECT -> smeltCollect(s);
         };
     }
 
@@ -83,12 +87,17 @@ public final class StepTasks {
                     bb.set(AIKeys.GOAL_COUNT, s.count());
                     bb.set(AIKeys.TARGET, null);
                     bb.set(AIKeys.BREAKING, null);
+                    bb.set(AIKeys.CUR_BREAK, null);
                     bb.set(AIKeys.COLLECT, null);
+                    bb.set(AIKeys.BAD_TARGETS, null);
+                    bb.set(AIKeys.EXPLORING, null);
+                    bb.set(AIKeys.EXPLORE_TRIES, null);
                     NavTasks.resetNav(bb);
                     return Status.SUCCESS;
                 }),
                 MineTasks.mineTree(),
                 new Task("EndGather", bb -> {
+                    Breaker.abort(bb);
                     bb.set(AIKeys.GOAL_ITEM, null);
                     bb.set(AIKeys.MINE_BLOCK, null);
                     return Status.SUCCESS;
@@ -211,20 +220,34 @@ public final class StepTasks {
         return true;
     }
 
-    // ------------------------------------------------------------------ smelt
+    // ------------------------------------------------------------------ furnace: load, leave, collect
 
-    private static Node smelt(Step s) {
-        return new Sequence("Smelt " + s.item(), true,
-                new Task("InitSmelt", StepTasks::initJob),
+    private static Node smeltStart(Step s) {
+        return new Sequence("Load furnace: " + s.item(), true,
+                new Task("InitLoad", StepTasks::initJob),
                 new Task("FindFurnace", bb -> findStation(bb, "furnace")),
                 new Selector("ApproachFurnace", false, new Condition("NearStation", StepTasks::nearStation), NavTasks.gotoTree()),
                 new Task("PlaceFurnace", bb -> placeStation(bb, "furnace")),
                 new Task("OpenFurnace", bb -> openStation(bb, m -> m instanceof FurnaceMenu)),
-                new Task("Cook", bb -> doSmelt(bb, s)),
+                new Task("Load", bb -> doLoad(bb, s)),
+                new Task("Remember", bb -> {
+                    bb.set(AIKeys.FURNACE_POS, bb.get(AIKeys.STATION));
+                    return Status.SUCCESS;
+                }),
                 new Task("CloseFurnace", StepTasks::closeMenu));
     }
 
-    private static Status doSmelt(Blackboard bb, Step s) {
+    private static Node smeltCollect(Step s) {
+        return new Sequence("Collect " + s.item(), true,
+                new Task("InitCollect", StepTasks::initJob),
+                new Task("FindFurnace", StepTasks::rememberedFurnace),
+                new Selector("ApproachFurnace", false, new Condition("NearStation", StepTasks::nearStation), NavTasks.gotoTree()),
+                new Task("OpenFurnace", bb -> openStation(bb, m -> m instanceof FurnaceMenu)),
+                new Task("Take", bb -> doTake(bb, s)),
+                new Task("CloseFurnace", StepTasks::closeMenu));
+    }
+
+    private static Status doLoad(Blackboard bb, Step s) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = bb.get(AIKeys.PLAYER);
         AbstractContainerMenu menu = p.containerMenu;
@@ -254,7 +277,6 @@ public final class StepTasks {
             }
             cq.q.add(new Click(input.index, 0, ClickType.QUICK_MOVE));
             cq.q.add(new Click(fuel.index, 0, ClickType.QUICK_MOVE));
-            bb.set(AIKeys.EXPECT, Inv.count(p, s.item()) + s.count());
             cq.built = true;
             return Status.RUNNING;
         }
@@ -263,9 +285,37 @@ public final class StepTasks {
             mc.gameMode.handleInventoryMouseClick(menu.containerId, c.slot(), c.button(), c.type(), p);
             return Status.RUNNING;
         }
+        if (++cq.settle < 4) {
+            return Status.RUNNING;
+        }
+        boolean loaded = !menu.getSlot(0).getItem().isEmpty();
+        bb.set(AIKeys.CLICKS, null);
+        return loaded ? Status.SUCCESS : fail(bb, "furnace did not accept the input");
+    }
+
+    private static Status doTake(Blackboard bb, Step s) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = bb.get(AIKeys.PLAYER);
+        AbstractContainerMenu menu = p.containerMenu;
+        if (mc.gameMode == null) {
+            return fail(bb, "no game mode");
+        }
+        ClickQueue cq = bb.get(AIKeys.CLICKS);
+        if (cq == null) {
+            cq = new ClickQueue();
+            bb.set(AIKeys.CLICKS, cq);
+            bb.set(AIKeys.EXPECT, Inv.count(p, s.item()) + s.count());
+        }
+        if (!cq.q.isEmpty()) {
+            Click c = cq.q.poll();
+            mc.gameMode.handleInventoryMouseClick(menu.containerId, c.slot(), c.button(), c.type(), p);
+            return Status.RUNNING;
+        }
         if (!cq.collecting) {
             cq.waited++;
-            if (menu.getSlot(2).getItem().getCount() >= s.count() || cq.waited > s.count() * 220 + 400) {
+            boolean ready = menu.getSlot(2).getItem().getCount() >= s.count();
+            boolean timeout = cq.waited > s.count() * 220 + 400;
+            if (ready || timeout) {
                 cq.q.add(new Click(2, 0, ClickType.QUICK_MOVE));
                 cq.q.add(new Click(0, 0, ClickType.QUICK_MOVE));
                 cq.q.add(new Click(1, 0, ClickType.QUICK_MOVE));
@@ -307,6 +357,25 @@ public final class StepTasks {
         return Status.FAILURE;
     }
 
+    /** Heads for the furnace loaded earlier; falls back to any furnace nearby or one from the inventory. */
+    private static Status rememberedFurnace(Blackboard bb) {
+        ClientLevel level = bb.get(AIKeys.LEVEL);
+        BlockPos f = bb.get(AIKeys.FURNACE_POS);
+        if (f == null || !MineTasks.idOf(level.getBlockState(f)).equals("furnace")) {
+            return findStation(bb, "furnace");
+        }
+        BlockPos stand = MineTasks.reachCell(new WorldView(level), f);
+        if (stand == null) {
+            return fail(bb, "cannot reach the furnace at " + f.toShortString());
+        }
+        bb.set(AIKeys.STATION, f);
+        bb.set(AIKeys.GOAL, stand);
+        bb.set(AIKeys.PLACING, null);
+        bb.set(AIKeys.STEP_TICKS, 0);
+        NavTasks.resetNav(bb);
+        return Status.SUCCESS;
+    }
+
     /** Picks an existing station to walk to, or a spot to place one from the inventory. */
     private static Status findStation(Blackboard bb, String block) {
         LocalPlayer p = bb.get(AIKeys.PLAYER);
@@ -319,7 +388,7 @@ public final class StepTasks {
             if (!MineTasks.idOf(level.getBlockState(pos)).equals(block)) {
                 continue;
             }
-            BlockPos stand = MineTasks.standCell(view, pos);
+            BlockPos stand = MineTasks.reachCell(view, pos);
             if (stand != null) {
                 bb.set(AIKeys.STATION, pos);
                 bb.set(AIKeys.GOAL, stand);
@@ -421,11 +490,4 @@ public final class StepTasks {
         }
         for (Slot sl : p.inventoryMenu.slots) {
             if (sl.container == inv && sl.getContainerSlot() >= 9 && sl.getContainerSlot() < 36
-                    && sl.hasItem() && Inv.idOf(sl.getItem()).equals(itemId)) {
-                mc.gameMode.handleInventoryMouseClick(p.inventoryMenu.containerId, sl.index, inv.getSelectedSlot(), ClickType.SWAP, p);
-                return false;
-            }
-        }
-        return false;
-    }
-}
+               

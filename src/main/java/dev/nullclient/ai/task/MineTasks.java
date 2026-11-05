@@ -13,31 +13,31 @@ import dev.nullclient.ai.plan.Inv;
 import dev.nullclient.ai.world.BlockSpec;
 import dev.nullclient.ai.world.WorldScanner;
 import dev.nullclient.core.input.InputOverride;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.util.Mth;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Generic block-gathering tree. The target is a block spec (see BlockSpec); it ends when either MINED reaches
+ * Generic block-gathering tree. The target is a block spec (see BlockSpec). It ends when either MINED reaches
  * MINE_COUNT (the "mine" command) or the inventory holds GOAL_COUNT of GOAL_ITEM (planner gather steps).
+ * Targets that are buried are reached by tunnelling; unreachable targets are blacklisted; when nothing is
+ * indexed nearby it explores and rescans.
  */
 public final class MineTasks {
     private static final double REACH = 4.0;
     private static final int SCAN_XZ = 20;
     private static final int SCAN_Y = 10;
-    private static final int COLLECT_TICKS = 12;
+    private static final int COLLECT_TICKS = 6;
+    private static final int MAX_EXPLORES = 6;
+    private static final int MAX_BAD = 12;
 
     private MineTasks() {
     }
@@ -48,11 +48,13 @@ public final class MineTasks {
                 new Task("FindBlock", MineTasks::findBlock));
         Node approach = new Selector("Approach", false,
                 new Condition("InReach", MineTasks::inReach),
-                NavTasks.gotoTree());
+                NavTasks.gotoTree(),
+                new Task("DropTarget", MineTasks::dropTarget));
         Node mineOne = new Sequence("MineOne", false,
                 ensureTarget,
                 approach,
                 new Task("Break", MineTasks::breakBlock));
+        Node roamNav = NavTasks.gotoTree();
         return new Selector("Mine", false,
                 new Sequence("Collect", false,
                         new Condition("Collecting", bb -> bb.getOrDefault(AIKeys.COLLECT, 0) > 0),
@@ -60,6 +62,9 @@ public final class MineTasks {
                 new Sequence("Done", false,
                         new Condition("Enough", MineTasks::enough),
                         new Task("Finish", bb -> Status.SUCCESS)),
+                new Sequence("Explore", false,
+                        new Condition("Exploring", bb -> bb.getOrDefault(AIKeys.EXPLORING, false)),
+                        new Task("Roam", bb -> roam(bb, roamNav))),
                 mineOne);
     }
 
@@ -75,7 +80,7 @@ public final class MineTasks {
         return BuiltInRegistries.BLOCK.getKey(s.getBlock()).getPath();
     }
 
-    /** A safe standing cell next to the block from which it is within reach, or null. */
+    /** A safe walkable cell next to the block from which it is within reach, or null. */
     static BlockPos standCell(WorldView view, BlockPos t) {
         int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
         for (int[] d : dirs) {
@@ -83,6 +88,26 @@ public final class MineTasks {
             int nz = t.getZ() + d[1];
             for (int fy = t.getY(); fy >= t.getY() - 1; fy--) {
                 if (view.canStand(nx, fy, nz) && !view.nearHazard(nx, fy, nz)) {
+                    return new BlockPos(nx, fy, nz);
+                }
+            }
+        }
+        return null;
+    }
+
+    /** A walkable stand cell if one exists, otherwise a cell that can be tunnelled to. */
+    static BlockPos reachCell(WorldView view, BlockPos t) {
+        BlockPos walk = standCell(view, t);
+        if (walk != null) {
+            return walk;
+        }
+        int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (int[] d : dirs) {
+            int nx = t.getX() + d[0];
+            int nz = t.getZ() + d[1];
+            for (int fy = t.getY(); fy >= t.getY() - 1; fy--) {
+                boolean floor = view.isSolidTop(nx, fy - 1, nz);
+                if (floor && view.clearable(nx, fy, nz) && view.clearable(nx, fy + 1, nz) && !view.nearHazard(nx, fy, nz)) {
                     return new BlockPos(nx, fy, nz);
                 }
             }
@@ -114,22 +139,25 @@ public final class MineTasks {
     }
 
     static Status findBlock(Blackboard bb) {
+        bb.set(AIKeys.ALLOW_DIG, true);
         LocalPlayer p = bb.get(AIKeys.PLAYER);
         ClientLevel level = bb.get(AIKeys.LEVEL);
         String spec = bb.get(AIKeys.MINE_BLOCK);
         BlockPos origin = p.blockPosition();
         WorldView view = new WorldView(level);
+        AIKeys.BadSet bad = bb.get(AIKeys.BAD_TARGETS);
         List<BlockPos> candidates = WorldScanner.INSTANCE.covers(spec)
-                ? WorldScanner.INSTANCE.find(spec, origin, 64, 48)
+                ? WorldScanner.INSTANCE.find(spec, origin, 96, 64)
                 : boxScan(level, origin, spec);
-        boolean seen = false;
         for (BlockPos c : candidates) {
+            if (bad != null && bad.contains(c.asLong())) {
+                continue;
+            }
             BlockState s = level.getBlockState(c);
             if (s.isAir() || !BlockSpec.test(idOf(s), spec)) {
                 continue;
             }
-            seen = true;
-            BlockPos stand = standCell(view, c);
+            BlockPos stand = reachCell(view, c);
             if (stand == null) {
                 continue;
             }
@@ -138,10 +166,76 @@ public final class MineTasks {
             NavTasks.resetNav(bb);
             return Status.SUCCESS;
         }
-        bb.set(AIKeys.FAIL_REASON, seen
-                ? "found " + spec.replace("=", "") + " but it is buried (digging is not implemented yet)"
-                : "no " + spec.replace("=", "") + " nearby");
-        return Status.FAILURE;
+        String shown = spec.replace("=", "");
+        int tries = bb.getOrDefault(AIKeys.EXPLORE_TRIES, 0);
+        if (tries >= MAX_EXPLORES) {
+            bb.set(AIKeys.FAIL_REASON, "no reachable " + shown + " found after exploring");
+            return Status.FAILURE;
+        }
+        BlockPos goal = pickExploreGoal(level, p);
+        if (goal == null) {
+            bb.set(AIKeys.FAIL_REASON, "no " + shown + " nearby and nowhere to explore");
+            return Status.FAILURE;
+        }
+        bb.set(AIKeys.EXPLORE_TRIES, tries + 1);
+        bb.set(AIKeys.GOAL, goal);
+        bb.set(AIKeys.EXPLORING, true);
+        NavTasks.resetNav(bb);
+        return Status.RUNNING;
+    }
+
+    private static BlockPos pickExploreGoal(ClientLevel level, LocalPlayer p) {
+        WorldView view = new WorldView(level);
+        ThreadLocalRandom rnd = ThreadLocalRandom.current();
+        BlockPos o = p.blockPosition();
+        for (int attempt = 0; attempt < 14; attempt++) {
+            double angle = rnd.nextDouble(0.0, Math.PI * 2.0);
+            double dist = 48.0 - attempt * 3.0;
+            int x = o.getX() + (int) Math.round(Math.cos(angle) * dist);
+            int z = o.getZ() + (int) Math.round(Math.sin(angle) * dist);
+            if (!level.hasChunk(x >> 4, z >> 4)) {
+                continue;
+            }
+            for (int y = o.getY() + 12; y >= o.getY() - 24; y--) {
+                if (view.canStand(x, y, z)) {
+                    return new BlockPos(x, y, z);
+                }
+            }
+        }
+        return null;
+    }
+
+    static Status roam(Blackboard bb, Node nav) {
+        Status s = nav.tick(bb);
+        if (s != Status.RUNNING) {
+            bb.set(AIKeys.EXPLORING, null);
+            nav.reset(bb);
+            NavTasks.resetNav(bb);
+            bb.set(AIKeys.FAIL_REASON, null);
+        }
+        return Status.RUNNING;
+    }
+
+    /** The current target cannot be reached: remember that and pick another next tick. */
+    static Status dropTarget(Blackboard bb) {
+        BlockPos t = bb.get(AIKeys.TARGET);
+        AIKeys.BadSet bad = bb.get(AIKeys.BAD_TARGETS);
+        if (bad == null) {
+            bad = new AIKeys.BadSet();
+            bb.set(AIKeys.BAD_TARGETS, bad);
+        }
+        if (t != null) {
+            bad.add(t.asLong());
+        }
+        if (bad.size() > MAX_BAD) {
+            bb.set(AIKeys.FAIL_REASON, "gave up: too many unreachable targets");
+            return Status.FAILURE;
+        }
+        Breaker.abort(bb);
+        bb.set(AIKeys.TARGET, null);
+        bb.set(AIKeys.FAIL_REASON, null);
+        NavTasks.resetNav(bb);
+        return Status.RUNNING;
     }
 
     static boolean inReach(Blackboard bb) {
@@ -150,71 +244,30 @@ public final class MineTasks {
         return t != null && p.getEyePosition().distanceTo(Vec3.atCenterOf(t)) <= REACH;
     }
 
-    private static void selectBestTool(LocalPlayer p, BlockState s) {
-        Inventory inv = p.getInventory();
-        int bestSlot = inv.getSelectedSlot();
-        float bestSpeed = inv.getItem(bestSlot).getDestroySpeed(s);
-        for (int i = 0; i < 9; i++) {
-            float sp = inv.getItem(i).getDestroySpeed(s);
-            if (sp > bestSpeed + 1e-3f) {
-                bestSpeed = sp;
-                bestSlot = i;
-            }
-        }
-        if (bestSlot != inv.getSelectedSlot()) {
-            inv.setSelectedSlot(bestSlot);
-        }
-    }
-
     static Status breakBlock(Blackboard bb) {
-        Minecraft mc = Minecraft.getInstance();
-        LocalPlayer p = bb.get(AIKeys.PLAYER);
         ClientLevel level = bb.get(AIKeys.LEVEL);
         BlockPos t = bb.get(AIKeys.TARGET);
-        String spec = bb.get(AIKeys.MINE_BLOCK);
-        if (mc.gameMode == null) {
-            bb.set(AIKeys.FAIL_REASON, "no game mode available");
-            return Status.FAILURE;
+        if (t == null) {
+            return Status.RUNNING;
         }
+        String spec = bb.get(AIKeys.MINE_BLOCK);
         BlockState s = level.getBlockState(t);
-        boolean breaking = bb.getOrDefault(AIKeys.BREAKING, false);
         if (s.isAir() || !BlockSpec.test(idOf(s), spec)) {
-            if (breaking) {
+            if (t.equals(bb.get(AIKeys.CUR_BREAK))) {
                 bb.set(AIKeys.MINED, bb.getOrDefault(AIKeys.MINED, 0) + 1);
                 bb.set(AIKeys.LAST_BROKEN, t);
                 bb.set(AIKeys.COLLECT, COLLECT_TICKS);
             }
-            bb.set(AIKeys.BREAKING, null);
+            bb.set(AIKeys.CUR_BREAK, null);
             bb.set(AIKeys.TARGET, null);
             return Status.RUNNING;
         }
         if (!inReach(bb)) {
-            mc.gameMode.stopDestroyBlock();
-            bb.set(AIKeys.BREAKING, null);
+            Breaker.abort(bb);
             bb.set(AIKeys.TARGET, null);
             return Status.RUNNING;
         }
-        Vec3 c = Vec3.atCenterOf(t);
-        double dx = c.x - p.getX();
-        double dy = c.y - p.getEyeY();
-        double dz = c.z - p.getZ();
-        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
-        float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.hypot(dx, dz)));
-        bb.set(AIKeys.YAW, yaw);
-        bb.set(AIKeys.PITCH, pitch);
-        if (Math.abs(Mth.wrapDegrees(yaw - p.getYRot())) > 12.0f || Math.abs(pitch - p.getXRot()) > 12.0f) {
-            return Status.RUNNING;
-        }
-        selectBestTool(p, s);
-        Direction face = Direction.getApproximateNearest(p.getX() - c.x, p.getEyeY() - c.y, p.getZ() - c.z);
-        if (!breaking) {
-            mc.gameMode.startDestroyBlock(t, face);
-            bb.set(AIKeys.BREAKING, true);
-        } else {
-            mc.gameMode.continueDestroyBlock(t, face);
-        }
-        p.swing(InteractionHand.MAIN_HAND);
-        return Status.RUNNING;
+        return Breaker.step(bb, t) == Breaker.Result.FAILED ? Status.FAILURE : Status.RUNNING;
     }
 
     /** Steps toward the broken block's cell for a few ticks so dropped items are picked up. */

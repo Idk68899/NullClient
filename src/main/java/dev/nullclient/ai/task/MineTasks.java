@@ -9,6 +9,9 @@ import dev.nullclient.ai.bt.Sequence;
 import dev.nullclient.ai.bt.Status;
 import dev.nullclient.ai.bt.Task;
 import dev.nullclient.ai.nav.WorldView;
+import dev.nullclient.ai.plan.Inv;
+import dev.nullclient.ai.world.BlockSpec;
+import dev.nullclient.ai.world.WorldScanner;
 import dev.nullclient.core.input.InputOverride;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -22,7 +25,14 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
-/** Tree and leaves for {@code mine <block> [count]}: find, walk into reach, aim, pick tool, break, collect. */
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+
+/**
+ * Generic block-gathering tree. The target is a block spec (see BlockSpec); it ends when either MINED reaches
+ * MINE_COUNT (the "mine" command) or the inventory holds GOAL_COUNT of GOAL_ITEM (planner gather steps).
+ */
 public final class MineTasks {
     private static final double REACH = 4.0;
     private static final int SCAN_XZ = 20;
@@ -48,21 +58,25 @@ public final class MineTasks {
                         new Condition("Collecting", bb -> bb.getOrDefault(AIKeys.COLLECT, 0) > 0),
                         new Task("Pickup", MineTasks::collect)),
                 new Sequence("Done", false,
-                        new Condition("EnoughMined", bb -> bb.getOrDefault(AIKeys.MINED, 0) >= bb.getOrDefault(AIKeys.MINE_COUNT, 1)),
+                        new Condition("Enough", MineTasks::enough),
                         new Task("Finish", bb -> Status.SUCCESS)),
                 mineOne);
     }
 
-    static boolean matches(String id, String want) {
-        return id.equals(want) || id.endsWith("_" + want) || id.startsWith(want + "_");
+    static boolean enough(Blackboard bb) {
+        String item = bb.get(AIKeys.GOAL_ITEM);
+        if (item != null) {
+            return Inv.count(bb.get(AIKeys.PLAYER), item) >= bb.getOrDefault(AIKeys.GOAL_COUNT, 1);
+        }
+        return bb.getOrDefault(AIKeys.MINED, 0) >= bb.getOrDefault(AIKeys.MINE_COUNT, 1);
     }
 
-    private static String idOf(BlockState s) {
+    static String idOf(BlockState s) {
         return BuiltInRegistries.BLOCK.getKey(s.getBlock()).getPath();
     }
 
     /** A safe standing cell next to the block from which it is within reach, or null. */
-    private static BlockPos standCell(WorldView view, BlockPos t) {
+    static BlockPos standCell(WorldView view, BlockPos t) {
         int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
         for (int[] d : dirs) {
             int nx = t.getX() + d[0];
@@ -76,16 +90,9 @@ public final class MineTasks {
         return null;
     }
 
-    static Status findBlock(Blackboard bb) {
-        LocalPlayer p = bb.get(AIKeys.PLAYER);
-        ClientLevel level = bb.get(AIKeys.LEVEL);
-        String want = bb.get(AIKeys.MINE_BLOCK);
-        WorldView view = new WorldView(level);
-        BlockPos origin = p.blockPosition();
+    private static List<BlockPos> boxScan(ClientLevel level, BlockPos origin, String spec) {
+        List<BlockPos> out = new ArrayList<>();
         BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-        BlockPos best = null;
-        BlockPos bestStand = null;
-        double bestD = Double.MAX_VALUE;
         for (int dx = -SCAN_XZ; dx <= SCAN_XZ; dx++) {
             for (int dz = -SCAN_XZ; dz <= SCAN_XZ; dz++) {
                 int x = origin.getX() + dx;
@@ -95,35 +102,46 @@ public final class MineTasks {
                 }
                 for (int dy = -SCAN_Y; dy <= SCAN_Y; dy++) {
                     mp.set(x, origin.getY() + dy, z);
-                    double d = mp.distSqr(origin);
-                    if (d >= bestD) {
-                        continue;
-                    }
                     BlockState s = level.getBlockState(mp);
-                    if (s.isAir() || !matches(idOf(s), want)) {
-                        continue;
+                    if (!s.isAir() && BlockSpec.test(idOf(s), spec)) {
+                        out.add(mp.immutable());
                     }
-                    BlockPos stand = standCell(view, mp);
-                    if (stand == null) {
-                        continue;
-                    }
-                    best = mp.immutable();
-                    bestStand = stand;
-                    bestD = d;
                 }
             }
         }
-        if (best == null) {
-            bb.set(AIKeys.FAIL_REASON, "no reachable " + want + " within " + SCAN_XZ + " blocks");
-            return Status.FAILURE;
+        out.sort(Comparator.comparingDouble(b -> b.distSqr(origin)));
+        return out.size() > 48 ? new ArrayList<>(out.subList(0, 48)) : out;
+    }
+
+    static Status findBlock(Blackboard bb) {
+        LocalPlayer p = bb.get(AIKeys.PLAYER);
+        ClientLevel level = bb.get(AIKeys.LEVEL);
+        String spec = bb.get(AIKeys.MINE_BLOCK);
+        BlockPos origin = p.blockPosition();
+        WorldView view = new WorldView(level);
+        List<BlockPos> candidates = WorldScanner.INSTANCE.covers(spec)
+                ? WorldScanner.INSTANCE.find(spec, origin, 64, 48)
+                : boxScan(level, origin, spec);
+        boolean seen = false;
+        for (BlockPos c : candidates) {
+            BlockState s = level.getBlockState(c);
+            if (s.isAir() || !BlockSpec.test(idOf(s), spec)) {
+                continue;
+            }
+            seen = true;
+            BlockPos stand = standCell(view, c);
+            if (stand == null) {
+                continue;
+            }
+            bb.set(AIKeys.TARGET, c);
+            bb.set(AIKeys.GOAL, stand);
+            NavTasks.resetNav(bb);
+            return Status.SUCCESS;
         }
-        bb.set(AIKeys.TARGET, best);
-        bb.set(AIKeys.GOAL, bestStand);
-        bb.set(AIKeys.PATH, null);
-        bb.set(AIKeys.SEARCH, null);
-        bb.set(AIKeys.FOLLOWER, null);
-        bb.set(AIKeys.REPLANS, 0);
-        return Status.SUCCESS;
+        bb.set(AIKeys.FAIL_REASON, seen
+                ? "found " + spec.replace("=", "") + " but it is buried (digging is not implemented yet)"
+                : "no " + spec.replace("=", "") + " nearby");
+        return Status.FAILURE;
     }
 
     static boolean inReach(Blackboard bb) {
@@ -153,13 +171,14 @@ public final class MineTasks {
         LocalPlayer p = bb.get(AIKeys.PLAYER);
         ClientLevel level = bb.get(AIKeys.LEVEL);
         BlockPos t = bb.get(AIKeys.TARGET);
+        String spec = bb.get(AIKeys.MINE_BLOCK);
         if (mc.gameMode == null) {
             bb.set(AIKeys.FAIL_REASON, "no game mode available");
             return Status.FAILURE;
         }
         BlockState s = level.getBlockState(t);
         boolean breaking = bb.getOrDefault(AIKeys.BREAKING, false);
-        if (s.isAir() || !matches(idOf(s), bb.get(AIKeys.MINE_BLOCK))) {
+        if (s.isAir() || !BlockSpec.test(idOf(s), spec)) {
             if (breaking) {
                 bb.set(AIKeys.MINED, bb.getOrDefault(AIKeys.MINED, 0) + 1);
                 bb.set(AIKeys.LAST_BROKEN, t);

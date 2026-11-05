@@ -5,16 +5,18 @@ import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.PriorityQueue;
+import java.util.Set;
 
 /**
  * Incremental A* over block-grid player positions (feet cell).
  *
- * <p>Move set: walk, diagonal, step-up (1 block), descend (up to {@value #MAX_FALL} blocks) and parkour
- * jumps across gaps (2-4 blocks flat, up to 3 blocks with +1 height, down to -2). Hazards are impassable and
- * cells adjacent to hazards and water carry extra cost. When the node budget is exhausted the search yields a
- * partial path to the explored node closest to the goal.
+ * <p>Move set: walk, diagonal, step-up, descend (up to {@value #MAX_FALL} blocks), parkour jumps (2-4 blocks),
+ * and, when digging is allowed, DIG_WALK / DIG_DOWN / DIG_UP moves that tunnel through safe solid blocks.
+ * In dig mode the heuristic is weighted so tunnels head almost straight for the goal instead of flooding the
+ * rock. When the node budget runs out the search yields a partial path to the closest explored node.
  */
 public final class AStarPathfinder {
     public static final int MAX_FALL = 3;
@@ -29,8 +31,11 @@ public final class AStarPathfinder {
         private static final int[][] CARDINAL = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
         private static final int[][] DIAGONAL = {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
         private static final int[] JUMP_DY = {1, 0, -1, -2};
+        private static final double DIG_COST = 3.0;
+        private static final double DIG_HEURISTIC_WEIGHT = 3.0;
 
         private final WorldView v;
+        private final boolean allowDig;
         private final int gx;
         private final int gy;
         private final int gz;
@@ -38,7 +43,7 @@ public final class AStarPathfinder {
         private final PathNode start;
         private final PriorityQueue<PathNode> open = new PriorityQueue<>((a, b) -> Double.compare(a.f(), b.f()));
         private final Long2ObjectOpenHashMap<PathNode> best = new Long2ObjectOpenHashMap<>();
-        private final java.util.Set<PathNode> closed = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        private final Set<PathNode> closed = Collections.newSetFromMap(new IdentityHashMap<>());
 
         private int expansions;
         private PathNode closest;
@@ -46,12 +51,18 @@ public final class AStarPathfinder {
         private State state = State.RUNNING;
 
         public Search(WorldView view, BlockPos from, BlockPos goal, int maxExpansions) {
+            this(view, from, goal, maxExpansions, false);
+        }
+
+        public Search(WorldView view, BlockPos from, BlockPos goal, int maxExpansions, boolean allowDig) {
             this.v = view;
+            this.allowDig = allowDig;
             this.gx = goal.getX();
             this.gy = goal.getY();
             this.gz = goal.getZ();
             this.maxExpansions = maxExpansions;
-            this.start = new PathNode(from.getX(), from.getY(), from.getZ(), MoveType.START, 0, heuristic(from.getX(), from.getY(), from.getZ()), null);
+            this.start = new PathNode(from.getX(), from.getY(), from.getZ(), MoveType.START, 0,
+                    heuristic(from.getX(), from.getY(), from.getZ()), null);
             this.closest = start;
             best.put(BlockPos.asLong(start.x, start.y, start.z), start);
             open.add(start);
@@ -105,7 +116,8 @@ public final class AStarPathfinder {
         }
 
         private void finish() {
-            state = closest != start && closest.h < start.h - 2.0 ? State.PARTIAL : State.FAILED;
+            double margin = allowDig ? 4.0 : 2.0;
+            state = closest != start && closest.h < start.h - margin ? State.PARTIAL : State.FAILED;
         }
 
         private Path build(PathNode end, boolean partial) {
@@ -122,6 +134,9 @@ public final class AStarPathfinder {
             double dz = Math.abs(gz - z);
             double dy = gy - y;
             double horizontal = Math.max(dx, dz) + 0.414 * Math.min(dx, dz);
+            if (allowDig) {
+                return DIG_HEURISTIC_WEIGHT * Math.max(horizontal, Math.abs(dy));
+            }
             return horizontal + (dy > 0 ? dy * 1.3 : -dy * 0.3);
         }
 
@@ -171,6 +186,9 @@ public final class AStarPathfinder {
                     }
                     parkour(n, dx, dz);
                 }
+                if (allowDig) {
+                    digMoves(n, dx, dz);
+                }
             }
             for (int[] d : DIAGONAL) {
                 int dx = d[0];
@@ -180,6 +198,36 @@ public final class AStarPathfinder {
                         && v.bodyFree(x, y, z + dz) && v.bodyFree(x, y + 1, z + dz)) {
                     offer(n, x + dx, y, z + dz, MoveType.DIAGONAL, 1.45);
                 }
+            }
+        }
+
+        /** Tunnelling moves; each needs at least one block to dig (otherwise a normal move already exists). */
+        private void digMoves(PathNode n, int dx, int dz) {
+            int x = n.x;
+            int y = n.y;
+            int z = n.z;
+            int nx = x + dx;
+            int nz = z + dz;
+            int feet = v.digCost(nx, y, nz);
+            int head = v.digCost(nx, y + 1, nz);
+
+            // flat tunnel
+            if (feet >= 0 && head >= 0 && feet + head > 0 && v.isSolidTop(nx, y - 1, nz)) {
+                offer(n, nx, y, nz, MoveType.DIG_WALK, 1.0 + DIG_COST * (feet + head));
+            }
+
+            // staircase down: clear three cells, land one level lower on solid floor
+            int below = v.digCost(nx, y - 1, nz);
+            if (feet >= 0 && head >= 0 && below >= 0 && feet + head + below > 0 && v.isSolidTop(nx, y - 2, nz)) {
+                offer(n, nx, y - 1, nz, MoveType.DIG_DOWN, 1.5 + DIG_COST * (feet + head + below));
+            }
+
+            // staircase up: headroom above us, plus feet and head of the cell one level higher
+            int headroom = v.digCost(x, y + 2, z);
+            int upFeet = head;
+            int upHead = v.digCost(nx, y + 2, nz);
+            if (headroom >= 0 && upFeet >= 0 && upHead >= 0 && headroom + upFeet + upHead > 0 && v.isSolidTop(nx, y, nz)) {
+                offer(n, nx, y + 1, nz, MoveType.DIG_UP, 2.0 + DIG_COST * (headroom + upFeet + upHead));
             }
         }
 

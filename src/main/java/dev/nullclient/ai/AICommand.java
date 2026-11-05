@@ -10,6 +10,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
 
 /** Chat interface: {@code .ai <profile_name> <task>}. Messages starting with ".ai" never reach the server. */
@@ -70,6 +71,13 @@ public final class AICommand {
         String[] task = Arrays.copyOfRange(t, 2, t.length);
         if (task[0].equalsIgnoreCase("stop")) {
             reply(ai.cancel(profile.get()) ? "stopped " + profile.get().name : profile.get().name + " has no running task", ChatFormatting.YELLOW);
+            return;
+        }
+        if (task[0].equalsIgnoreCase("plan")) {
+            List<String> lines = TaskFactory.preview(Arrays.copyOfRange(task, 1, task.length));
+            for (String l : lines) {
+                reply(l, ChatFormatting.GRAY);
+            }
             return;
         }
         AIAgent agent = ai.assign(profile.get(), task);

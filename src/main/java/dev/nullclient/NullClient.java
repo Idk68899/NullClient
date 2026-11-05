@@ -2,6 +2,8 @@ package dev.nullclient;
 
 import dev.nullclient.ai.AICommand;
 import dev.nullclient.ai.AIManager;
+import dev.nullclient.ai.plan.Knowledge;
+import dev.nullclient.ai.world.WorldScanner;
 import dev.nullclient.core.event.EventBus;
 import dev.nullclient.core.event.Events;
 import dev.nullclient.core.macro.MacroManager;
@@ -55,6 +57,8 @@ public final class NullClient implements ClientModInitializer {
         bus.register(macros);
         bus.register(ai);
         bus.register(new AICommand(ai, profiles));
+        WorldScanner.INSTANCE.setInterest(Knowledge.get().scanIds());
+        bus.register(WorldScanner.INSTANCE);
 
         NullUI built = new NullUI(this);
         layouts.bindPanels(built::panels);

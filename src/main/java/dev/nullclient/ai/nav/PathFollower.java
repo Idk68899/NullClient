@@ -2,16 +2,22 @@ package dev.nullclient.ai.nav;
 
 import dev.nullclient.ai.AIKeys;
 import dev.nullclient.ai.bt.Blackboard;
+import dev.nullclient.ai.task.Breaker;
 import dev.nullclient.core.input.InputOverride;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Walks a {@link Path} by emitting movement actions and a target view angle into the blackboard.
- * Handles sprinting, step-ups, descents, swimming and take-off timing for parkour jumps; reports failure when
- * the player is stuck, off-route, or the upcoming nodes are no longer safe.
+ * Handles sprinting, step-ups, descents, swimming, parkour take-off and tunnelling: before a dig move it
+ * breaks the blocks in the way, one at a time. Reports failure when stuck, off-route, or when upcoming nodes
+ * are no longer safe.
  */
 public final class PathFollower {
     public enum Result { RUNNING, DONE, FAILED }
@@ -40,6 +46,34 @@ public final class PathFollower {
 
     public int index() {
         return index;
+    }
+
+    private static boolean passable(ClientLevel level, BlockPos pos) {
+        return level.getBlockState(pos).getCollisionShape(level, pos).isEmpty();
+    }
+
+    /** Cells that must be empty before the player can make this dig move. */
+    private static List<BlockPos> cellsToClear(PathNode prev, PathNode t) {
+        List<BlockPos> out = new ArrayList<>(3);
+        switch (t.move) {
+            case DIG_WALK -> {
+                out.add(new BlockPos(t.x, t.y + 1, t.z));
+                out.add(new BlockPos(t.x, t.y, t.z));
+            }
+            case DIG_DOWN -> {
+                out.add(new BlockPos(t.x, t.y + 2, t.z));
+                out.add(new BlockPos(t.x, t.y + 1, t.z));
+                out.add(new BlockPos(t.x, t.y, t.z));
+            }
+            case DIG_UP -> {
+                out.add(new BlockPos(prev.x, prev.y + 2, prev.z));
+                out.add(new BlockPos(t.x, t.y + 1, t.z));
+                out.add(new BlockPos(t.x, t.y, t.z));
+            }
+            default -> {
+            }
+        }
+        return out;
     }
 
     public Result tick(LocalPlayer p, ClientLevel level, Blackboard bb) {
@@ -74,7 +108,10 @@ public final class PathFollower {
             WorldView view = new WorldView(level);
             for (int i = index; i < Math.min(path.size(), index + 3); i++) {
                 PathNode n = path.get(i);
-                if (!view.canStand(n.x, n.y, n.z)) {
+                boolean ok = n.move.isDig()
+                        ? view.clearable(n.x, n.y, n.z) && view.clearable(n.x, n.y + 1, n.z)
+                        : view.canStand(n.x, n.y, n.z);
+                if (!ok) {
                     return Result.FAILED;
                 }
             }
@@ -89,6 +126,23 @@ public final class PathFollower {
         if (hd > 6.0 || pos.y < t.y - 4.5) {
             return Result.FAILED;
         }
+
+        if (t.move.isDig()) {
+            for (BlockPos cell : cellsToClear(prev, t)) {
+                if (passable(level, cell)) {
+                    continue;
+                }
+                Breaker.Result r = Breaker.step(bb, cell);
+                if (r == Breaker.Result.FAILED) {
+                    return Result.FAILED;
+                }
+                stuck = 0;
+                if (r == Breaker.Result.BUSY) {
+                    return Result.RUNNING;
+                }
+            }
+        }
+
         double metric = hd + Math.abs(pos.y - t.y) * 0.5;
         if (metric < bestDistance - 0.02) {
             bestDistance = metric;
@@ -103,12 +157,12 @@ public final class PathFollower {
 
         int actions = InputOverride.FORWARD;
         switch (t.move) {
-            case WALK, DIAGONAL -> {
+            case WALK, DIAGONAL, DIG_WALK -> {
                 if (hd > 1.0 && !p.isInWater()) {
                     actions |= InputOverride.SPRINT;
                 }
             }
-            case STEP_UP -> {
+            case STEP_UP, DIG_UP -> {
                 if (grounded && hd < 1.25 && pos.y < t.y - 0.05) {
                     actions |= InputOverride.JUMP;
                 }

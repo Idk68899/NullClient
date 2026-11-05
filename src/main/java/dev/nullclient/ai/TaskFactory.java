@@ -2,6 +2,7 @@ package dev.nullclient.ai;
 
 import dev.nullclient.ai.bt.Blackboard;
 import dev.nullclient.ai.task.NavTasks;
+import dev.nullclient.ai.task.MineTasks;
 import dev.nullclient.core.session.Profile;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;

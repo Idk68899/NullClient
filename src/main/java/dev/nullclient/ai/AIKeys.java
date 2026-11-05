@@ -10,8 +10,14 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 
+import java.util.HashSet;
+
 public final class AIKeys {
     private AIKeys() {
+    }
+
+    /** Positions (packed longs) that proved unreachable for the current gather step. */
+    public static final class BadSet extends HashSet<Long> {
     }
 
     public static final Key<LocalPlayer> PLAYER = Key.of("player", LocalPlayer.class);
@@ -30,19 +36,27 @@ public final class AIKeys {
     public static final Key<Float> YAW = Key.of("yaw", Float.class);
     public static final Key<Float> PITCH = Key.of("pitch", Float.class);
 
+    // navigation
+    public static final Key<Boolean> ALLOW_DIG = Key.of("allowDig", Boolean.class);
+
     // mining
     public static final Key<BlockPos> TARGET = Key.of("target", BlockPos.class);
     public static final Key<BlockPos> LAST_BROKEN = Key.of("lastBroken", BlockPos.class);
+    public static final Key<BlockPos> CUR_BREAK = Key.of("curBreak", BlockPos.class);
     public static final Key<String> MINE_BLOCK = Key.of("mineBlock", String.class);
     public static final Key<Integer> MINE_COUNT = Key.of("mineCount", Integer.class);
     public static final Key<Integer> MINED = Key.of("mined", Integer.class);
     public static final Key<Integer> COLLECT = Key.of("collect", Integer.class);
     public static final Key<Boolean> BREAKING = Key.of("breaking", Boolean.class);
+    public static final Key<BadSet> BAD_TARGETS = Key.of("badTargets", BadSet.class);
+    public static final Key<Boolean> EXPLORING = Key.of("exploring", Boolean.class);
+    public static final Key<Integer> EXPLORE_TRIES = Key.of("exploreTries", Integer.class);
 
     // planner / stations / inventory clicks
     public static final Key<String> GOAL_ITEM = Key.of("goalItem", String.class);
     public static final Key<Integer> GOAL_COUNT = Key.of("goalCount", Integer.class);
     public static final Key<BlockPos> STATION = Key.of("station", BlockPos.class);
+    public static final Key<BlockPos> FURNACE_POS = Key.of("furnacePos", BlockPos.class);
     public static final Key<Boolean> PLACING = Key.of("placing", Boolean.class);
     public static final Key<Integer> STEP_TICKS = Key.of("stepTicks", Integer.class);
     public static final Key<Integer> EXPECT = Key.of("expect", Integer.class);

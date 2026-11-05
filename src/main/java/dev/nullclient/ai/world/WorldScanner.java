@@ -22,20 +22,23 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Incremental block index. Each tick it rescans a few 16x16x16 sections around the player (skipping
- * sections whose palette contains nothing of interest) and remembers where the interesting blocks are.
+ * Incremental block index. Each tick it rescans 16x16x16 sections around the player within a small time
+ * budget (skipping sections whose palette holds nothing of interest), nearest first, and remembers where the
+ * interesting blocks are. After a full pass it idles briefly before rescanning.
  */
 public final class WorldScanner {
     public static final WorldScanner INSTANCE = new WorldScanner();
 
-    private static final int RADIUS_CHUNKS = 4;
-    private static final int SECTIONS_PER_TICK = 3;
+    private static final int RADIUS_CHUNKS = 6;
+    private static final long BUDGET_NANOS = 3_000_000L;
+    private static final int IDLE_TICKS = 60;
 
     private final Map<Long, Map<String, LongArrayList>> sections = new HashMap<>();
     private final Map<Block, String> interest = new HashMap<>();
     private final Set<String> interestIds = new HashSet<>();
     private final List<int[]> queue = new ArrayList<>();
     private int cursor;
+    private int idle;
     private long lastCenter = Long.MIN_VALUE;
     private ClientLevel level;
 
@@ -55,10 +58,11 @@ public final class WorldScanner {
         sections.clear();
     }
 
-    /** True if every part of the spec is an exact id this scanner indexes. */
+    /** True if every part of the spec names a block id this scanner indexes. */
     public boolean covers(String spec) {
         for (String part : spec.split(",")) {
-            if (!part.startsWith("=") || !interestIds.contains(part.substring(1))) {
+            String id = part.startsWith("=") ? part.substring(1) : part;
+            if (!interestIds.contains(id)) {
                 return false;
             }
         }
@@ -87,16 +91,27 @@ public final class WorldScanner {
             rebuildQueue(pcx, Math.floorDiv(p.blockPosition().getY(), 16), pcz);
             lastCenter = center;
         }
-        for (int i = 0; i < SECTIONS_PER_TICK && !queue.isEmpty(); i++) {
+        if (idle > 0) {
+            idle--;
+            return;
+        }
+        long end = System.nanoTime() + BUDGET_NANOS;
+        while (!queue.isEmpty() && System.nanoTime() < end) {
             int[] q = queue.get(cursor);
-            cursor = (cursor + 1) % queue.size();
             scan(q[0], q[1], q[2]);
+            cursor++;
+            if (cursor >= queue.size()) {
+                cursor = 0;
+                idle = IDLE_TICKS;
+                break;
+            }
         }
     }
 
     private void rebuildQueue(int pcx, int psy, int pcz) {
         queue.clear();
         cursor = 0;
+        idle = 0;
         Set<Long> keep = new HashSet<>();
         for (int cx = pcx - RADIUS_CHUNKS; cx <= pcx + RADIUS_CHUNKS; cx++) {
             for (int cz = pcz - RADIUS_CHUNKS; cz <= pcz + RADIUS_CHUNKS; cz++) {

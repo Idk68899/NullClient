@@ -14,8 +14,8 @@ import dev.nullclient.ai.nav.Path;
 import dev.nullclient.ai.nav.PathFollower;
 import dev.nullclient.ai.nav.WorldView;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 
 import java.util.concurrent.ThreadLocalRandom;
@@ -31,7 +31,7 @@ public final class NavTasks {
 
     // ------------------------------------------------------------------ trees
 
-    /** Reactive goto tree: arrive > follow current path > (re)plan > abort. */
+    /** Reactive goto tree: arrive > follow current path > (re)plan > abort. Digs only if ALLOW_DIG is set. */
     public static Node gotoTree() {
         return new Selector("Goto", false,
                 new Sequence("Arrived", false,
@@ -114,7 +114,8 @@ public final class NavTasks {
             if (!p.onGround() && !p.isInWater()) {
                 return Status.RUNNING;
             }
-            search = new AStarPathfinder.Search(new WorldView(level), p.blockPosition(), goal, MAX_EXPANSIONS);
+            boolean dig = bb.getOrDefault(AIKeys.ALLOW_DIG, false);
+            search = new AStarPathfinder.Search(new WorldView(level), p.blockPosition(), goal, MAX_EXPANSIONS, dig);
             bb.set(AIKeys.SEARCH, search);
         }
         switch (search.step(SEARCH_BUDGET_PER_TICK)) {

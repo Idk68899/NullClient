@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "nullclient",
+  "version": "${version}",
+  "name": "NullClient",
+  "description": "Modular client framework: ImGui UI, session management, and a behavior-tree AI engine.",
+  "authors": ["NullClient"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.nullclient.NullClient"]
+  },
+  "mixins": ["nullclient.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": ">=26.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}

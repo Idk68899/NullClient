@@ -10,7 +10,8 @@ import java.util.Set;
 /**
  * Backward-chaining planner. To obtain an item it finds a way (gather, craft or smelt), recursively plans
  * the prerequisites (tools, ingredients, stations, fuel) against a simulated inventory, and emits steps in
- * execution order. All game rules come from {@link Knowledge}.
+ * execution order. Smelting is split into "load furnace" and "collect"; collect steps are then moved as late as
+ * possible so the bot can work while the furnace cooks. All game rules come from {@link Knowledge}.
  */
 public final class Planner {
     public static final class PlanException extends RuntimeException {
@@ -34,7 +35,43 @@ public final class Planner {
     public static List<Step> plan(Map<String, Integer> have, Set<String> stations, String item, int count) {
         Planner p = new Planner(new HashMap<>(have), new HashSet<>(stations));
         p.need(item, count);
-        return p.steps;
+        return defer(p.steps);
+    }
+
+    private static List<Step> defer(List<Step> in) {
+        List<Step> out = new ArrayList<>(in);
+        for (int i = 0; i < out.size(); i++) {
+            Step c = out.get(i);
+            if (c.kind() != Step.Kind.SMELT_COLLECT) {
+                continue;
+            }
+            int limit = out.size();
+            for (int j = i + 1; j < out.size(); j++) {
+                Step o = out.get(j);
+                if (o.kind() == Step.Kind.SMELT_START || consumes(o, c.item())) {
+                    limit = j;
+                    break;
+                }
+            }
+            if (limit - 1 > i) {
+                out.remove(i);
+                out.add(limit - 1, c);
+                i--;
+            }
+        }
+        return out;
+    }
+
+    private static boolean consumes(Step s, String item) {
+        Knowledge k = Knowledge.get();
+        if (s.kind() == Step.Kind.CRAFT) {
+            for (String token : s.recipe().ingredients().keySet()) {
+                if (k.members(token).contains(item)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void need(String token, int count) {
@@ -130,7 +167,8 @@ public final class Planner {
         if (!stations.contains("furnace") && Inv.count(inv, "furnace") == 0) {
             need("furnace", 1);
         }
-        steps.add(new Step(Step.Kind.SMELT, s.out, n, null, null, s));
+        steps.add(new Step(Step.Kind.SMELT_START, s.out, n, null, null, s));
+        steps.add(new Step(Step.Kind.SMELT_COLLECT, s.out, n, null, null, s));
         inv.merge(item, n, Integer::sum);
     }
 }

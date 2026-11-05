@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.nullclient.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "KeyboardInputMixin",
+    "WindowMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

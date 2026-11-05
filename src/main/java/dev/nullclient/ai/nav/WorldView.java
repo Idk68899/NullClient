@@ -19,11 +19,20 @@ public final class WorldView {
     private static final int SOLID_TOP = 2;
     private static final int HAZARD = 4;
     private static final int WATER = 8;
+    private static final int FLUID = 16;
+    private static final int SOLID = 32;
+    private static final int PROTECTED = 64;
 
     private static final Set<Block> HAZARD_BLOCKS = Set.of(
             Blocks.FIRE, Blocks.SOUL_FIRE, Blocks.MAGMA_BLOCK, Blocks.CAMPFIRE, Blocks.SOUL_CAMPFIRE,
             Blocks.CACTUS, Blocks.SWEET_BERRY_BUSH, Blocks.COBWEB, Blocks.POWDER_SNOW, Blocks.WITHER_ROSE,
             Blocks.LAVA, Blocks.LAVA_CAULDRON, Blocks.POINTED_DRIPSTONE);
+
+    /** Never dug through, regardless of hardness. */
+    private static final Set<Block> PROTECTED_BLOCKS = Set.of(
+            Blocks.FURNACE, Blocks.BLAST_FURNACE, Blocks.SMOKER, Blocks.CRAFTING_TABLE, Blocks.CHEST,
+            Blocks.TRAPPED_CHEST, Blocks.BARREL, Blocks.ENDER_CHEST, Blocks.SPAWNER, Blocks.BEACON,
+            Blocks.END_PORTAL_FRAME);
 
     private final ClientLevel level;
     private final BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
@@ -66,10 +75,20 @@ public final class WorldView {
         if (water) {
             f |= WATER;
         }
-        if (!empty && !hazard) {
-            double top = shape.max(Direction.Axis.Y);
-            if (top >= 0.999 && top <= 1.001) {
-                f |= SOLID_TOP;
+        if (water || lava) {
+            f |= FLUID;
+        }
+        if (!empty) {
+            f |= SOLID;
+            float hardness = s.getDestroySpeed(level, mp);
+            if (hardness < 0.0f || hardness > 20.0f || PROTECTED_BLOCKS.contains(s.getBlock())) {
+                f |= PROTECTED;
+            }
+            if (!hazard) {
+                double top = shape.max(Direction.Axis.Y);
+                if (top >= 0.999 && top <= 1.001) {
+                    f |= SOLID_TOP;
+                }
             }
         }
         return f;
@@ -84,12 +103,16 @@ public final class WorldView {
         return (flags(x, y, z) & WATER) != 0;
     }
 
+    public boolean isSolidTop(int x, int y, int z) {
+        return (flags(x, y, z) & SOLID_TOP) != 0;
+    }
+
     /** A two-block-tall player can stand with feet in this cell. */
     public boolean canStand(int x, int y, int z) {
         if (!bodyFree(x, y, z) || !bodyFree(x, y + 1, z)) {
             return false;
         }
-        return (flags(x, y - 1, z) & SOLID_TOP) != 0 || isWater(x, y, z);
+        return isSolidTop(x, y - 1, z) || isWater(x, y, z);
     }
 
     /** Hazard (lava, fire, cactus, ...) adjacent at feet or floor level. */
@@ -102,5 +125,29 @@ public final class WorldView {
             }
         }
         return false;
+    }
+
+    /** No fluid or hazard touches any face of this cell, so opening it cannot flood or burn the tunnel. */
+    private boolean sealed(int x, int y, int z) {
+        int mask = FLUID | HAZARD;
+        return (flags(x + 1, y, z) & mask) == 0 && (flags(x - 1, y, z) & mask) == 0
+                && (flags(x, y + 1, z) & mask) == 0 && (flags(x, y - 1, z) & mask) == 0
+                && (flags(x, y, z + 1) & mask) == 0 && (flags(x, y, z - 1) & mask) == 0;
+    }
+
+    /** 0 if the cell is already free, 1 if it must be dug (and is safe to), -1 if it cannot be cleared. */
+    public int digCost(int x, int y, int z) {
+        int f = flags(x, y, z);
+        if ((f & PASSABLE) != 0) {
+            return 0;
+        }
+        if ((f & SOLID) != 0 && (f & (HAZARD | PROTECTED | FLUID)) == 0 && sealed(x, y, z)) {
+            return 1;
+        }
+        return -1;
+    }
+
+    public boolean clearable(int x, int y, int z) {
+        return digCost(x, y, z) >= 0;
     }
 }

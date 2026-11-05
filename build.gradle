@@ -1,0 +1,53 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // Dear ImGui (Java binding + LWJGL3 GLFW/OpenGL3 backends). LWJGL itself is provided by Minecraft.
+    def imgui = project.imgui_version
+    implementation("io.github.spair:imgui-java-binding:${imgui}")
+    implementation("io.github.spair:imgui-java-lwjgl3:${imgui}") { transitive = false }
+    implementation("io.github.spair:imgui-java-natives-windows:${imgui}")
+    implementation("io.github.spair:imgui-java-natives-linux:${imgui}")
+    implementation("io.github.spair:imgui-java-natives-macos:${imgui}")
+
+    include("io.github.spair:imgui-java-binding:${imgui}")
+    include("io.github.spair:imgui-java-lwjgl3:${imgui}")
+    include("io.github.spair:imgui-java-natives-windows:${imgui}")
+    include("io.github.spair:imgui-java-natives-linux:${imgui}")
+    include("io.github.spair:imgui-java-natives-macos:${imgui}")
+}
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": inputs.properties.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+    options.encoding = 'UTF-8'
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}

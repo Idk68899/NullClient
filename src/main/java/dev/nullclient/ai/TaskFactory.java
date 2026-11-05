@@ -45,7 +45,8 @@ public final class TaskFactory {
             }
             case "follow": {
                 if (args.length != 2) {
-                    throw new IllegalArgumentException("usage: follow <player>");
+                    throw new 
+    public static final String USAGE = "goto <x> <y> <z> | mine <block> [count] | wander [radius] | follow <player> | stop";
                 }
                 bb.set(AIKeys.TARGET_NAME, args[1]);
                 return new AIAgent(profile, "follow " + args[1], NavTasks.followTree(), bb);

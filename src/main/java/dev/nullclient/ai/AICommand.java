@@ -7,6 +7,7 @@ import dev.nullclient.core.session.Profile;
 import dev.nullclient.core.session.ProfileManager;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
 
 import java.util.Arrays;
@@ -85,8 +86,11 @@ public final class AICommand {
     }
 
     private static void reply(String text, ChatFormatting color) {
-        Minecraft mc = Minecraft.getInstance();
-        mc.gui.hud.getChat().addMessage(Component.literal("[NullAI] ").withStyle(ChatFormatting.AQUA)
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p == null) {
+            return;
+        }
+        p.sendSystemMessage(Component.literal("[NullAI] ").withStyle(ChatFormatting.AQUA)
                 .append(Component.literal(text).withStyle(color)));
     }
 }

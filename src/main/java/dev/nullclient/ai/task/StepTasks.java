@@ -21,7 +21,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.inventory.FurnaceMenu;
 import net.minecraft.world.inventory.Slot;
@@ -43,7 +43,7 @@ import java.util.function.Predicate;
 public final class StepTasks {
     private static final double REACH = 4.0;
 
-    public record Click(int slot, int button, ClickType type) {
+    public record Click(int slot, int button, ContainerInput type) {
     }
 
     public static final class ClickQueue {
@@ -149,7 +149,7 @@ public final class StepTasks {
         }
         if (!cq.q.isEmpty()) {
             Click c = cq.q.poll();
-            mc.gameMode.handleInventoryMouseClick(menu.containerId, c.slot(), c.button(), c.type(), p);
+            mc.gameMode.handleContainerInput(menu.containerId, c.slot(), c.button(), c.type(), p);
             return Status.RUNNING;
         }
         if (++cq.settle < 6) {
@@ -167,7 +167,7 @@ public final class StepTasks {
         Knowledge k = Knowledge.get();
         for (int i = 1; i <= w * w; i++) {
             if (!menu.getSlot(i).getItem().isEmpty()) {
-                out.add(new Click(i, 0, ClickType.QUICK_MOVE));
+                out.add(new Click(i, 0, ContainerInput.QUICK_MOVE));
             }
         }
         Map<Integer, Integer> sim = new HashMap<>();
@@ -207,16 +207,16 @@ public final class StepTasks {
                     return false;
                 }
                 int take = Math.min(remaining, best);
-                out.add(new Click(src, 0, ClickType.PICKUP));
+                out.add(new Click(src, 0, ContainerInput.PICKUP));
                 for (int t = 0; t < take; t++) {
-                    out.add(new Click(c.slot(), 1, ClickType.PICKUP));
+                    out.add(new Click(c.slot(), 1, ContainerInput.PICKUP));
                 }
-                out.add(new Click(src, 0, ClickType.PICKUP));
+                out.add(new Click(src, 0, ContainerInput.PICKUP));
                 sim.put(src, best - take);
                 remaining -= take;
             }
         }
-        out.add(new Click(0, 0, ClickType.QUICK_MOVE));
+        out.add(new Click(0, 0, ContainerInput.QUICK_MOVE));
         return true;
     }
 
@@ -275,14 +275,14 @@ public final class StepTasks {
             if (fuel == null) {
                 return fail(bb, "no fuel for the furnace");
             }
-            cq.q.add(new Click(input.index, 0, ClickType.QUICK_MOVE));
-            cq.q.add(new Click(fuel.index, 0, ClickType.QUICK_MOVE));
+            cq.q.add(new Click(input.index, 0, ContainerInput.QUICK_MOVE));
+            cq.q.add(new Click(fuel.index, 0, ContainerInput.QUICK_MOVE));
             cq.built = true;
             return Status.RUNNING;
         }
         if (!cq.q.isEmpty()) {
             Click c = cq.q.poll();
-            mc.gameMode.handleInventoryMouseClick(menu.containerId, c.slot(), c.button(), c.type(), p);
+            mc.gameMode.handleContainerInput(menu.containerId, c.slot(), c.button(), c.type(), p);
             return Status.RUNNING;
         }
         if (++cq.settle < 4) {
@@ -308,7 +308,7 @@ public final class StepTasks {
         }
         if (!cq.q.isEmpty()) {
             Click c = cq.q.poll();
-            mc.gameMode.handleInventoryMouseClick(menu.containerId, c.slot(), c.button(), c.type(), p);
+            mc.gameMode.handleContainerInput(menu.containerId, c.slot(), c.button(), c.type(), p);
             return Status.RUNNING;
         }
         if (!cq.collecting) {
@@ -316,9 +316,9 @@ public final class StepTasks {
             boolean ready = menu.getSlot(2).getItem().getCount() >= s.count();
             boolean timeout = cq.waited > s.count() * 220 + 400;
             if (ready || timeout) {
-                cq.q.add(new Click(2, 0, ClickType.QUICK_MOVE));
-                cq.q.add(new Click(0, 0, ClickType.QUICK_MOVE));
-                cq.q.add(new Click(1, 0, ClickType.QUICK_MOVE));
+                cq.q.add(new Click(2, 0, ContainerInput.QUICK_MOVE));
+                cq.q.add(new Click(0, 0, ContainerInput.QUICK_MOVE));
+                cq.q.add(new Click(1, 0, ContainerInput.QUICK_MOVE));
                 cq.collecting = true;
             }
             return Status.RUNNING;
@@ -478,7 +478,7 @@ public final class StepTasks {
         return Status.SUCCESS;
     }
 
-        /** Puts the item in the selected hotbar slot. Returns true once it is in hand. */
+    /** Puts the item in the selected hotbar slot. Returns true once it is in hand. */
     private static boolean selectItem(LocalPlayer p, String itemId) {
         Minecraft mc = Minecraft.getInstance();
         Inventory inv = p.getInventory();
@@ -491,7 +491,7 @@ public final class StepTasks {
         for (Slot sl : p.inventoryMenu.slots) {
             if (sl.container == inv && sl.getContainerSlot() >= 9 && sl.getContainerSlot() < 36
                     && sl.hasItem() && Inv.idOf(sl.getItem()).equals(itemId)) {
-                mc.gameMode.handleInventoryMouseClick(p.inventoryMenu.containerId, sl.index, inv.getSelectedSlot(), ClickType.SWAP, p);
+                mc.gameMode.handleContainerInput(p.inventoryMenu.containerId, sl.index, inv.getSelectedSlot(), ContainerInput.SWAP, p);
                 return false;
             }
         }

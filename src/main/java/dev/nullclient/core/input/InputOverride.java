@@ -13,6 +13,10 @@ public final class InputOverride {
     public static final int SNEAK = 1 << 5;
     public static final int SPRINT = 1 << 6;
 
+    /** Set by the mixins the first time they run; used by ".ai debug" to show which hooks are alive. */
+    public static volatile boolean inputHookRan;
+    public static volatile boolean uiHookRan;
+
     private static volatile String owner;
     private static volatile int actions;
 

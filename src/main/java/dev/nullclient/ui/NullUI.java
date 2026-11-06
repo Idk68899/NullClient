@@ -20,7 +20,7 @@ import org.lwjgl.opengl.GL30;
 
 import java.util.List;
 
-/** ImGui context owner. Frames are driven by WindowMixin on the render thread. */
+/** ImGui context owner. Frames are driven by MinecraftMixin on the render thread. */
 public final class NullUI {
     private final NullClient nc;
     private final List<Panel> panels;
@@ -32,6 +32,7 @@ public final class NullUI {
     private boolean failed;
     private boolean toggleDown;
     private boolean panicDown;
+    private volatile boolean pendingToggle;
     private long frame;
 
     public NullUI(NullClient nc) {
@@ -48,6 +49,10 @@ public final class NullUI {
         return panels;
     }
 
+    public String status() {
+        return ready ? "ready" : failed ? "FAILED to initialise (see latest.log)" : "not started yet";
+    }
+
     public boolean isMenuOpen() {
         return Minecraft.getInstance().gui.screen() instanceof NullScreen;
     }
@@ -56,19 +61,32 @@ public final class NullUI {
         return ready && isMenuOpen() && ImGui.getIO().getWantTextInput();
     }
 
+    /** Opens or closes the menu on the next tick (the chat screen must close first). */
+    public void requestToggle() {
+        pendingToggle = true;
+    }
+
+    private void toggleNow(Minecraft mc) {
+        if (mc.gui.screen() instanceof NullScreen) {
+            mc.gui.setScreen(null);
+        } else if (mc.gui.screen() == null) {
+            mc.gui.setScreen(new NullScreen());
+        }
+    }
+
     /** RIGHT SHIFT toggles the menu; END is the panic key that stops every agent and macro. */
     public void pollHotkeys(Minecraft mc) {
+        if (pendingToggle && (mc.gui.screen() == null || mc.gui.screen() instanceof NullScreen)) {
+            pendingToggle = false;
+            toggleNow(mc);
+        }
         long window = GLFW.glfwGetCurrentContext();
         if (window == 0L) {
             return;
         }
         boolean toggle = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
         if (toggle && !toggleDown && !isTyping()) {
-            if (mc.gui.screen() instanceof NullScreen) {
-                mc.gui.setScreen(null);
-            } else if (mc.gui.screen() == null) {
-                mc.gui.setScreen(new NullScreen());
-            }
+            toggleNow(mc);
         }
         toggleDown = toggle;
 
@@ -153,6 +171,10 @@ public final class NullUI {
                 for (Panel p : panels) {
                     ImGui.menuItem(p.title, "", p.open);
                 }
+                ImGui.separator();
+                if (ImGui.menuItem("Close menu")) {
+                    requestToggle();
+                }
                 ImGui.endMenu();
             }
             var active = nc.profiles().active();
@@ -163,7 +185,7 @@ public final class NullUI {
                         nc.store().isLocked() ? "  [locked]" : "  [encrypted]");
             }
             ImGui.sameLine();
-            GlassTheme.colored(GlassTheme.MUTED, "  RSHIFT: menu   END: stop all");
+            GlassTheme.colored(GlassTheme.MUTED, "  RSHIFT or .ai menu: toggle   END: stop all");
             ImGui.endMainMenuBar();
         }
     }

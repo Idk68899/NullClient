@@ -2,6 +2,7 @@ package dev.nullclient;
 
 import dev.nullclient.ai.AICommand;
 import dev.nullclient.ai.AIManager;
+import dev.nullclient.ai.AiCommandTree;
 import dev.nullclient.ai.plan.Knowledge;
 import dev.nullclient.ai.world.WorldScanner;
 import dev.nullclient.core.event.EventBus;
@@ -14,6 +15,7 @@ import dev.nullclient.core.session.SessionStore;
 import dev.nullclient.ui.LayoutManager;
 import dev.nullclient.ui.NullUI;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
@@ -70,6 +72,7 @@ public final class NullClient implements ClientModInitializer {
             InputOverride.drive(mc);
         });
         ClientSendMessageEvents.ALLOW_CHAT.register(message -> !bus.post(new Events.ChatSend(message)).isCancelled());
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> AiCommandTree.register(dispatcher));
         ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> shutdown());
 
         instance = this;

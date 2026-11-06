@@ -478,7 +478,7 @@ public final class StepTasks {
         return Status.SUCCESS;
     }
 
-    /** Puts the item in the selected hotbar slot. Returns true once it is in hand. */
+        /** Puts the item in the selected hotbar slot. Returns true once it is in hand. */
     private static boolean selectItem(LocalPlayer p, String itemId) {
         Minecraft mc = Minecraft.getInstance();
         Inventory inv = p.getInventory();
@@ -490,4 +490,11 @@ public final class StepTasks {
         }
         for (Slot sl : p.inventoryMenu.slots) {
             if (sl.container == inv && sl.getContainerSlot() >= 9 && sl.getContainerSlot() < 36
-               
+                    && sl.hasItem() && Inv.idOf(sl.getItem()).equals(itemId)) {
+                mc.gameMode.handleInventoryMouseClick(p.inventoryMenu.containerId, sl.index, inv.getSelectedSlot(), ClickType.SWAP, p);
+                return false;
+            }
+        }
+        return false;
+    }
+}

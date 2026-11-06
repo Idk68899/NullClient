@@ -1,5 +1,5 @@
 {
-  "required": true,
+  "required": false,
   "minVersion": "0.8",
   "package": "dev.nullclient.mixin",
   "compatibilityLevel": "JAVA_25",
@@ -8,6 +8,6 @@
     "WindowMixin"
   ],
   "injectors": {
-    "defaultRequire": 1
+    "defaultRequire": 0
   }
 }

@@ -49,7 +49,7 @@ public final class NullUI {
     }
 
     public boolean isMenuOpen() {
-        return Minecraft.getInstance().screen instanceof NullScreen;
+        return Minecraft.getInstance().gui.screen() instanceof NullScreen;
     }
 
     private boolean isTyping() {
@@ -64,10 +64,10 @@ public final class NullUI {
         }
         boolean toggle = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
         if (toggle && !toggleDown && !isTyping()) {
-            if (mc.screen instanceof NullScreen) {
-                mc.setScreen(null);
-            } else if (mc.screen == null) {
-                mc.setScreen(new NullScreen());
+            if (mc.gui.screen() instanceof NullScreen) {
+                mc.gui.setScreen(null);
+            } else if (mc.gui.screen() == null) {
+                mc.gui.setScreen(new NullScreen());
             }
         }
         toggleDown = toggle;
@@ -173,8 +173,8 @@ public final class NullUI {
             return;
         }
         ready = false;
-        gl3.dispose();
-        glfw.dispose();
+        gl3.shutdown();
+        glfw.shutdown();
         ImGui.destroyContext();
     }
 }

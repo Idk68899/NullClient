@@ -86,7 +86,7 @@ public final class AICommand {
 
     private static void reply(String text, ChatFormatting color) {
         Minecraft mc = Minecraft.getInstance();
-        mc.gui.getChat().addMessage(Component.literal("[NullAI] ").withStyle(ChatFormatting.AQUA)
+        mc.gui.hud.getChat().addMessage(Component.literal("[NullAI] ").withStyle(ChatFormatting.AQUA)
                 .append(Component.literal(text).withStyle(color)));
     }
 }

@@ -169,7 +169,7 @@ public final class MacroManager {
             return;
         }
         if (recording != null) {
-            int a = mc.screen == null ? readActions(mc) : 0;
+            int a = mc.gui.screen() == null ? readActions(mc) : 0;
             float yaw = p.getYRot();
             float pitch = p.getXRot();
             boolean first = recording.frames.isEmpty();

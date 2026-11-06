@@ -42,7 +42,7 @@ public final class AICommand {
     private void handle(String[] t) {
         if (t.length == 1 || t[1].equalsIgnoreCase("help")) {
             reply("usage: .ai <profile> <task>   tasks: " + TaskFactory.USAGE, ChatFormatting.GRAY);
-            reply(".ai list | .ai stopall", ChatFormatting.GRAY);
+            reply(".ai new <name> | .ai profiles | .ai list | .ai stopall", ChatFormatting.GRAY);
             return;
         }
         if (t[1].equalsIgnoreCase("list")) {
@@ -62,12 +62,30 @@ public final class AICommand {
         if (profiles.store().isLocked()) {
             throw new IllegalStateException("profile store is locked; unlock it in the UI first");
         }
+        if (t[1].equalsIgnoreCase("profiles")) {
+            if (profiles.all().isEmpty()) {
+                reply("no profiles; create one with: .ai new <name>", ChatFormatting.GRAY);
+            }
+            for (Profile p : profiles.all()) {
+                reply(p.name + (p == profiles.active() ? "  (active)" : ""), ChatFormatting.GRAY);
+            }
+            return;
+        }
+        if (t[1].equalsIgnoreCase("new")) {
+            if (t.length < 3) {
+                throw new IllegalArgumentException("usage: .ai new <name>");
+            }
+            Profile created = profiles.create(t[2]);
+            profiles.setActive(created);
+            reply("created and activated profile '" + created.name + "'", ChatFormatting.GREEN);
+            return;
+        }
         if (t.length < 3) {
             throw new IllegalArgumentException("usage: .ai <profile> <task>   tasks: " + TaskFactory.USAGE);
         }
         Optional<Profile> profile = profiles.byName(t[1]);
         if (profile.isEmpty()) {
-            throw new IllegalArgumentException("unknown profile '" + t[1] + "'");
+            throw new IllegalArgumentException("unknown profile '" + t[1] + "'. Create one with: .ai new <name>");
         }
         String[] task = Arrays.copyOfRange(t, 2, t.length);
         if (task[0].equalsIgnoreCase("stop")) {

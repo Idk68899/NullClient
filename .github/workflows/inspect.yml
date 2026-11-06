@@ -1,0 +1,37 @@
+name: inspect
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+      - run: gradle build --no-daemon || true
+      - name: Dump Minecraft classes
+        run: |
+          for JAR in $(find ~/.gradle -name '*.jar' -size +20M | grep -i minecraft); do
+            if unzip -l "$JAR" | grep -q 'com/mojang/blaze3d/platform/Window.class'; then
+              echo "=============== JAR: $JAR"
+              echo "----- Window"
+              javap -p -cp "$JAR" com.mojang.blaze3d.platform.Window
+              echo "----- Minecraft (render/frame/run methods)"
+              javap -p -cp "$JAR" net.minecraft.client.Minecraft | grep -iE 'render|frame|runTick|run\(|blit|present'
+              echo "----- KeyboardInput"
+              javap -p -cp "$JAR" net.minecraft.client.player.KeyboardInput
+              echo "----- ClientInput"
+              javap -p -cp "$JAR" net.minecraft.client.player.ClientInput
+              echo "----- GLFW / SDL usage in Window"
+              javap -p -c -cp "$JAR" com.mojang.blaze3d.platform.Window | grep -ciE 'glfw'
+              javap -p -c -cp "$JAR" com.mojang.blaze3d.platform.Window | grep -ciE 'sdl'
+              echo "----- surface/present classes"
+              unzip -l "$JAR" | awk '{print $4}' | grep -iE 'GpuSurface|GlSurface|Presenter|Vulkan' | head -40
+            fi
+          done

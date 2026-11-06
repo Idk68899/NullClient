@@ -20,18 +20,18 @@ jobs:
           for JAR in $(find ~/.gradle -name '*.jar' -size +20M | grep -i minecraft); do
             if unzip -l "$JAR" | grep -q 'com/mojang/blaze3d/platform/Window.class'; then
               echo "=============== JAR: $JAR"
-              echo "----- Window"
-              javap -p -cp "$JAR" com.mojang.blaze3d.platform.Window
-              echo "----- Minecraft (render/frame/run methods)"
-              javap -p -cp "$JAR" net.minecraft.client.Minecraft | grep -iE 'render|frame|runTick|run\(|blit|present'
-              echo "----- KeyboardInput"
-              javap -p -cp "$JAR" net.minecraft.client.player.KeyboardInput
-              echo "----- ClientInput"
-              javap -p -cp "$JAR" net.minecraft.client.player.ClientInput
-              echo "----- GLFW / SDL usage in Window"
-              javap -p -c -cp "$JAR" com.mojang.blaze3d.platform.Window | grep -ciE 'glfw'
-              javap -p -c -cp "$JAR" com.mojang.blaze3d.platform.Window | grep -ciE 'sdl'
-              echo "----- surface/present classes"
-              unzip -l "$JAR" | awk '{print $4}' | grep -iE 'GpuSurface|GlSurface|Presenter|Vulkan' | head -40
+              echo "----- Window: first 40 methods"
+              javap -p -cp "$JAR" com.mojang.blaze3d.platform.Window | head -40 || true
+              echo "----- renderFrame calls"
+              javap -p -c -cp "$JAR" net.minecraft.client.Minecraft | awk '/public void renderFrame\(boolean\);/ {f=1} f && /invoke/ {print} f && /^$/ {exit}' || true
+              echo "----- runTick calls (render-related)"
+              javap -p -c -cp "$JAR" net.minecraft.client.Minecraft | awk '/private void runTick\(boolean\);/ {f=1} f && /invoke/ {print} f && /^$/ {exit}' | grep -iE 'render|frame|blit|present|swap|window' || true
+              echo "----- classes that call glfwSwapBuffers"
+              for cls in $(unzip -l "$JAR" | awk '{print $4}' | grep -E '^com/mojang/.*\.class$' | sed 's/\.class$//; s#/#.#g'); do
+                javap -p -c -cp "$JAR" "$cls" 2>/dev/null | awk -v c="$cls" '/^  [a-z].*\);$/ {m=$0} /glfwSwapBuffers/ {print c " :: " m}' || true
+              done
+              echo "----- surface/backend classes"
+              unzip -l "$JAR" | awk '{print $4}' | grep -iE 'GpuSurface|GlSurface|GpuBackend|Presenter|Vulkan' | head -40 || true
             fi
           done
+          exit 0

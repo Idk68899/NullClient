@@ -8,25 +8,69 @@
     {"item":"#logs","blocks":["#logs"],"scan":true},
     {"item":"cobblestone","blocks":["stone","cobblestone"],"tool":["wooden_pickaxe","stone_pickaxe","iron_pickaxe","diamond_pickaxe"]},
     {"item":"cobbled_deepslate","blocks":["deepslate"],"tool":["wooden_pickaxe","stone_pickaxe","iron_pickaxe","diamond_pickaxe"]},
+    {"item":"dirt","blocks":["dirt","grass_block"]},
+    {"item":"sand","blocks":["sand"]},
+    {"item":"gravel","blocks":["gravel"]},
     {"item":"coal","blocks":["coal_ore","deepslate_coal_ore"],"tool":["wooden_pickaxe","stone_pickaxe","iron_pickaxe","diamond_pickaxe"],"scan":true},
     {"item":"raw_iron","blocks":["iron_ore","deepslate_iron_ore"],"tool":["stone_pickaxe","iron_pickaxe","diamond_pickaxe"],"scan":true},
+    {"item":"raw_gold","blocks":["gold_ore","deepslate_gold_ore"],"tool":["iron_pickaxe","diamond_pickaxe"],"scan":true},
+    {"item":"redstone","blocks":["redstone_ore","deepslate_redstone_ore"],"tool":["iron_pickaxe","diamond_pickaxe"],"scan":true},
+    {"item":"lapis_lazuli","blocks":["lapis_ore","deepslate_lapis_ore"],"tool":["stone_pickaxe","iron_pickaxe","diamond_pickaxe"],"scan":true},
     {"item":"diamond","blocks":["diamond_ore","deepslate_diamond_ore"],"tool":["iron_pickaxe","diamond_pickaxe"],"scan":true},
+    {"item":"emerald","blocks":["emerald_ore","deepslate_emerald_ore"],"tool":["iron_pickaxe","diamond_pickaxe"],"scan":true},
     {"item":"flint","blocks":["gravel"],"chance":0.1}
   ],
   "recipes": [
     {"out":"#planks","count":4,"pattern":["L"],"key":{"L":"#logs"}},
     {"out":"stick","count":4,"pattern":["P","P"],"key":{"P":"#planks"}},
     {"out":"crafting_table","count":1,"pattern":["PP","PP"],"key":{"P":"#planks"}},
+    {"out":"chest","count":1,"pattern":["PPP","P P","PPP"],"key":{"P":"#planks"}},
+    {"out":"torch","count":4,"pattern":["C","S"],"key":{"C":"coal","S":"stick"}},
+    {"out":"ladder","count":3,"pattern":["S S","SSS","S S"],"key":{"S":"stick"}},
+    {"out":"furnace","count":1,"pattern":["CCC","C C","CCC"],"key":{"C":"#cobble"}},
+    {"out":"bucket","count":1,"pattern":["I I"," I "],"key":{"I":"iron_ingot"}},
+    {"out":"shears","count":1,"pattern":[" I","I "],"key":{"I":"iron_ingot"}},
+    {"out":"flint_and_steel","count":1,"shapeless":["iron_ingot","flint"]},
+
     {"out":"wooden_pickaxe","count":1,"pattern":["PPP"," S "," S "],"key":{"P":"#planks","S":"stick"}},
     {"out":"stone_pickaxe","count":1,"pattern":["CCC"," S "," S "],"key":{"C":"#cobble","S":"stick"}},
     {"out":"iron_pickaxe","count":1,"pattern":["III"," S "," S "],"key":{"I":"iron_ingot","S":"stick"}},
     {"out":"diamond_pickaxe","count":1,"pattern":["DDD"," S "," S "],"key":{"D":"diamond","S":"stick"}},
-    {"out":"furnace","count":1,"pattern":["CCC","C C","CCC"],"key":{"C":"#cobble"}},
-    {"out":"bucket","count":1,"pattern":["I I"," I "],"key":{"I":"iron_ingot"}},
-    {"out":"flint_and_steel","count":1,"shapeless":["iron_ingot","flint"]}
+
+    {"out":"wooden_axe","count":1,"pattern":["PP","PS"," S"],"key":{"P":"#planks","S":"stick"}},
+    {"out":"stone_axe","count":1,"pattern":["CC","CS"," S"],"key":{"C":"#cobble","S":"stick"}},
+    {"out":"iron_axe","count":1,"pattern":["II","IS"," S"],"key":{"I":"iron_ingot","S":"stick"}},
+    {"out":"diamond_axe","count":1,"pattern":["DD","DS"," S"],"key":{"D":"diamond","S":"stick"}},
+
+    {"out":"wooden_shovel","count":1,"pattern":["P","S","S"],"key":{"P":"#planks","S":"stick"}},
+    {"out":"stone_shovel","count":1,"pattern":["C","S","S"],"key":{"C":"#cobble","S":"stick"}},
+    {"out":"iron_shovel","count":1,"pattern":["I","S","S"],"key":{"I":"iron_ingot","S":"stick"}},
+    {"out":"diamond_shovel","count":1,"pattern":["D","S","S"],"key":{"D":"diamond","S":"stick"}},
+
+    {"out":"wooden_hoe","count":1,"pattern":["PP"," S"," S"],"key":{"P":"#planks","S":"stick"}},
+    {"out":"stone_hoe","count":1,"pattern":["CC"," S"," S"],"key":{"C":"#cobble","S":"stick"}},
+    {"out":"iron_hoe","count":1,"pattern":["II"," S"," S"],"key":{"I":"iron_ingot","S":"stick"}},
+    {"out":"diamond_hoe","count":1,"pattern":["DD"," S"," S"],"key":{"D":"diamond","S":"stick"}},
+
+    {"out":"wooden_sword","count":1,"pattern":["P","P","S"],"key":{"P":"#planks","S":"stick"}},
+    {"out":"stone_sword","count":1,"pattern":["C","C","S"],"key":{"C":"#cobble","S":"stick"}},
+    {"out":"iron_sword","count":1,"pattern":["I","I","S"],"key":{"I":"iron_ingot","S":"stick"}},
+    {"out":"diamond_sword","count":1,"pattern":["D","D","S"],"key":{"D":"diamond","S":"stick"}},
+
+    {"out":"iron_helmet","count":1,"pattern":["III","I I"],"key":{"I":"iron_ingot"}},
+    {"out":"iron_chestplate","count":1,"pattern":["I I","III","III"],"key":{"I":"iron_ingot"}},
+    {"out":"iron_leggings","count":1,"pattern":["III","I I","I I"],"key":{"I":"iron_ingot"}},
+    {"out":"iron_boots","count":1,"pattern":["I I","I I"],"key":{"I":"iron_ingot"}},
+    {"out":"diamond_helmet","count":1,"pattern":["DDD","D D"],"key":{"D":"diamond"}},
+    {"out":"diamond_chestplate","count":1,"pattern":["D D","DDD","DDD"],"key":{"D":"diamond"}},
+    {"out":"diamond_leggings","count":1,"pattern":["DDD","D D","D D"],"key":{"D":"diamond"}},
+    {"out":"diamond_boots","count":1,"pattern":["D D","D D"],"key":{"D":"diamond"}}
   ],
   "smelt": [
     {"out":"iron_ingot","in":"raw_iron"},
+    {"out":"gold_ingot","in":"raw_gold"},
+    {"out":"glass","in":"sand"},
+    {"out":"stone","in":"cobblestone"},
     {"out":"charcoal","in":"#logs"}
   ],
   "fuel": [

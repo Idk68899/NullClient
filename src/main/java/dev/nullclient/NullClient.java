@@ -6,6 +6,7 @@ import dev.nullclient.ai.plan.Knowledge;
 import dev.nullclient.ai.world.WorldScanner;
 import dev.nullclient.core.event.EventBus;
 import dev.nullclient.core.event.Events;
+import dev.nullclient.core.input.InputOverride;
 import dev.nullclient.core.macro.MacroManager;
 import dev.nullclient.core.session.ProfileManager;
 import dev.nullclient.core.session.RouteManager;
@@ -66,6 +67,7 @@ public final class NullClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
             built.pollHotkeys(mc);
             bus.post(Events.ClientTick.INSTANCE);
+            InputOverride.drive(mc);
         });
         ClientSendMessageEvents.ALLOW_CHAT.register(message -> !bus.post(new Events.ChatSend(message)).isCancelled());
         ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> shutdown());

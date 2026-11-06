@@ -9,7 +9,7 @@ public final class Say {
     }
 
     public static void line(String text) {
-        Minecraft.getInstance().gui.getChat().addMessage(Component.literal("[NullAI] ").withStyle(ChatFormatting.AQUA)
+        Minecraft.getInstance().gui.hud.getChat().addMessage(Component.literal("[NullAI] ").withStyle(ChatFormatting.AQUA)
                 .append(Component.literal(text).withStyle(ChatFormatting.GRAY)));
     }
 }

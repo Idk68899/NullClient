@@ -51,6 +51,8 @@ public final class AIKeys {
     public static final Key<BadSet> BAD_TARGETS = Key.of("badTargets", BadSet.class);
     public static final Key<Boolean> EXPLORING = Key.of("exploring", Boolean.class);
     public static final Key<Integer> EXPLORE_TRIES = Key.of("exploreTries", Integer.class);
+    public static final Key<Boolean> TUNNEL = Key.of("tunnel", Boolean.class);
+    public static final Key<Integer> DIG_STEPS = Key.of("digSteps", Integer.class);
 
     // planner / stations / inventory clicks
     public static final Key<String> GOAL_ITEM = Key.of("goalItem", String.class);

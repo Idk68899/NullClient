@@ -30,9 +30,11 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * Generic block-gathering tree. The target is a block spec (see BlockSpec). It ends when either MINED reaches
  * MINE_COUNT (the "mine" command) or the inventory holds GOAL_COUNT of GOAL_ITEM (planner gather steps).
- * A block is only broken with a clear line of sight; buried targets are reached by tunnelling to them.
- * After each block it walks to the dropped item to pick it up. Unreachable targets are blacklisted; when
- * nothing is indexed nearby it explores and rescans.
+ *
+ * <p>Exposed targets are reached by walking. Buried targets are reached by walking to the closest standable
+ * spot near them and then tunnelling toward them greedily (see DigTasks). A block is only broken with a clear
+ * line of sight. After each block the agent walks to the dropped item. Unreachable targets are blacklisted;
+ * when nothing is indexed nearby it explores and rescans.
  */
 public final class MineTasks {
     private static final double REACH = 4.0;
@@ -42,6 +44,7 @@ public final class MineTasks {
     private static final int COLLECT_GRACE = 8;
     private static final int MAX_EXPLORES = 6;
     private static final int MAX_BAD = 12;
+    private static final int MAX_BURIED_CHECKS = 6;
 
     private MineTasks() {
     }
@@ -52,7 +55,12 @@ public final class MineTasks {
                 new Task("FindBlock", MineTasks::findBlock));
         Node approach = new Selector("Approach", false,
                 new Condition("InReach", MineTasks::inReach),
-                NavTasks.gotoTree(),
+                new Sequence("Walk", false,
+                        new Condition("WalkPhase", bb -> !bb.getOrDefault(AIKeys.TUNNEL, false) && !NavTasks.atGoal(bb)),
+                        NavTasks.gotoTree()),
+                new Sequence("Tunnel", false,
+                        new Condition("DigPhase", bb -> bb.getOrDefault(AIKeys.TUNNEL, false) || NavTasks.atGoal(bb)),
+                        new Task("Dig", DigTasks::digToward)),
                 new Task("DropTarget", MineTasks::dropTarget));
         Node mineOne = new Sequence("MineOne", false,
                 ensureTarget,
@@ -99,7 +107,7 @@ public final class MineTasks {
         return null;
     }
 
-    /** A walkable stand cell if one exists, otherwise a cell that can be tunnelled to. */
+    /** A walkable stand cell if one exists, otherwise a cell that can be tunnelled to (used for stations). */
     static BlockPos reachCell(WorldView view, BlockPos t) {
         BlockPos walk = standCell(view, t);
         if (walk != null) {
@@ -117,6 +125,29 @@ public final class MineTasks {
             }
         }
         return null;
+    }
+
+    /** The standable cell closest to a buried target, searched in a small box around it (usually the surface above). */
+    private static BlockPos surfaceNear(WorldView view, BlockPos t) {
+        BlockPos best = null;
+        double bestD = Double.MAX_VALUE;
+        for (int dx = -4; dx <= 4; dx++) {
+            for (int dz = -4; dz <= 4; dz++) {
+                for (int y = t.getY() + 14; y >= t.getY() - 2; y--) {
+                    int x = t.getX() + dx;
+                    int z = t.getZ() + dz;
+                    if (view.canStand(x, y, z) && !view.nearHazard(x, y, z)) {
+                        double dy = y - t.getY();
+                        double d = dx * dx + dz * dz + dy * dy;
+                        if (d < bestD) {
+                            bestD = d;
+                            best = new BlockPos(x, y, z);
+                        }
+                    }
+                }
+            }
+        }
+        return best;
     }
 
     private static List<BlockPos> boxScan(ClientLevel level, BlockPos origin, String spec) {
@@ -143,7 +174,9 @@ public final class MineTasks {
     }
 
     static Status findBlock(Blackboard bb) {
-        bb.set(AIKeys.ALLOW_DIG, true);
+        bb.set(AIKeys.ALLOW_DIG, null);
+        bb.set(AIKeys.TUNNEL, null);
+        bb.set(AIKeys.DIG_STEPS, null);
         LocalPlayer p = bb.get(AIKeys.PLAYER);
         ClientLevel level = bb.get(AIKeys.LEVEL);
         String spec = bb.get(AIKeys.MINE_BLOCK);
@@ -153,6 +186,14 @@ public final class MineTasks {
         List<BlockPos> candidates = WorldScanner.INSTANCE.covers(spec)
                 ? WorldScanner.INSTANCE.find(spec, origin, 96, 64)
                 : boxScan(level, origin, spec);
+
+        BlockPos exposed = null;
+        BlockPos exposedStand = null;
+        double exposedD = Double.MAX_VALUE;
+        BlockPos buried = null;
+        BlockPos buriedStand = null;
+        double buriedD = Double.MAX_VALUE;
+        int buriedChecked = 0;
         for (BlockPos c : candidates) {
             if (bad != null && bad.contains(c.asLong())) {
                 continue;
@@ -161,28 +202,57 @@ public final class MineTasks {
             if (s.isAir() || !BlockSpec.test(idOf(s), spec)) {
                 continue;
             }
-            BlockPos stand = reachCell(view, c);
-            if (stand == null) {
+            if (!view.clearable(c.getX(), c.getY(), c.getZ())) {
                 continue;
             }
-            bb.set(AIKeys.TARGET, c);
-            bb.set(AIKeys.GOAL, stand);
+            double d = Math.sqrt(c.distSqr(origin));
+            BlockPos walk = standCell(view, c);
+            if (walk != null) {
+                if (d < exposedD) {
+                    exposedD = d;
+                    exposed = c;
+                    exposedStand = walk;
+                }
+            } else if (d < buriedD && buriedChecked < MAX_BURIED_CHECKS) {
+                buriedChecked++;
+                BlockPos surface = surfaceNear(view, c);
+                if (surface != null) {
+                    buriedD = d;
+                    buried = c;
+                    buriedStand = surface;
+                }
+            }
+        }
+
+        BlockPos target = null;
+        BlockPos goal = null;
+        if (exposed != null && (buried == null || exposedD <= buriedD * 2.0 + 20.0)) {
+            target = exposed;
+            goal = exposedStand;
+        } else if (buried != null) {
+            target = buried;
+            goal = buriedStand;
+        }
+        if (target != null) {
+            bb.set(AIKeys.TARGET, target);
+            bb.set(AIKeys.GOAL, goal);
             NavTasks.resetNav(bb);
             return Status.SUCCESS;
         }
+
         String shown = spec.replace("=", "");
         int tries = bb.getOrDefault(AIKeys.EXPLORE_TRIES, 0);
         if (tries >= MAX_EXPLORES) {
             bb.set(AIKeys.FAIL_REASON, "no reachable " + shown + " found after exploring");
             return Status.FAILURE;
         }
-        BlockPos goal = pickExploreGoal(level, p);
-        if (goal == null) {
+        BlockPos explore = pickExploreGoal(level, p);
+        if (explore == null) {
             bb.set(AIKeys.FAIL_REASON, "no " + shown + " nearby and nowhere to explore");
             return Status.FAILURE;
         }
         bb.set(AIKeys.EXPLORE_TRIES, tries + 1);
-        bb.set(AIKeys.GOAL, goal);
+        bb.set(AIKeys.GOAL, explore);
         bb.set(AIKeys.EXPLORING, true);
         NavTasks.resetNav(bb);
         return Status.RUNNING;
@@ -237,6 +307,8 @@ public final class MineTasks {
         }
         Breaker.abort(bb);
         bb.set(AIKeys.TARGET, null);
+        bb.set(AIKeys.TUNNEL, null);
+        bb.set(AIKeys.DIG_STEPS, null);
         bb.set(AIKeys.FAIL_REASON, null);
         NavTasks.resetNav(bb);
         return Status.RUNNING;
@@ -289,11 +361,13 @@ public final class MineTasks {
             }
             bb.set(AIKeys.CUR_BREAK, null);
             bb.set(AIKeys.TARGET, null);
+            bb.set(AIKeys.TUNNEL, null);
+            bb.set(AIKeys.DIG_STEPS, null);
             return Status.RUNNING;
         }
         if (!inReach(bb)) {
-            // We arrived but still cannot see the block: give up on this one and pick another.
-            return dropTarget(bb);
+            // Not in reach yet: the approach step (walk or tunnel) handles it on the next tick.
+            return Status.RUNNING;
         }
         return Breaker.step(bb, t) == Breaker.Result.FAILED ? Status.FAILURE : Status.RUNNING;
     }

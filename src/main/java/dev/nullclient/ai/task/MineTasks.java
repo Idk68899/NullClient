@@ -17,6 +17,8 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.util.Mth;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
@@ -28,14 +30,16 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * Generic block-gathering tree. The target is a block spec (see BlockSpec). It ends when either MINED reaches
  * MINE_COUNT (the "mine" command) or the inventory holds GOAL_COUNT of GOAL_ITEM (planner gather steps).
- * Targets that are buried are reached by tunnelling; unreachable targets are blacklisted; when nothing is
- * indexed nearby it explores and rescans.
+ * A block is only broken with a clear line of sight; buried targets are reached by tunnelling to them.
+ * After each block it walks to the dropped item to pick it up. Unreachable targets are blacklisted; when
+ * nothing is indexed nearby it explores and rescans.
  */
 public final class MineTasks {
     private static final double REACH = 4.0;
     private static final int SCAN_XZ = 20;
     private static final int SCAN_Y = 10;
-    private static final int COLLECT_TICKS = 6;
+    private static final int COLLECT_TICKS = 40;
+    private static final int COLLECT_GRACE = 8;
     private static final int MAX_EXPLORES = 6;
     private static final int MAX_BAD = 12;
 
@@ -238,10 +242,35 @@ public final class MineTasks {
         return Status.RUNNING;
     }
 
+    /** True if nothing solid lies between the point and the centre of the target block. */
+    static boolean clearLine(ClientLevel level, Vec3 from, BlockPos target) {
+        Vec3 to = Vec3.atCenterOf(target);
+        Vec3 d = to.subtract(from);
+        int steps = Math.max(2, (int) Math.ceil(d.length() / 0.2));
+        BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
+        for (int i = 1; i < steps; i++) {
+            double f = i / (double) steps;
+            mp.set(Mth.floor(from.x + d.x * f), Mth.floor(from.y + d.y * f), Mth.floor(from.z + d.z * f));
+            if (mp.equals(target)) {
+                return true;
+            }
+            if (!level.getBlockState(mp).getCollisionShape(level, mp).isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Within reach AND with a clear view of the target; breaking blocks through other blocks is not allowed. */
     static boolean inReach(Blackboard bb) {
         BlockPos t = bb.get(AIKeys.TARGET);
         LocalPlayer p = bb.get(AIKeys.PLAYER);
-        return t != null && p.getEyePosition().distanceTo(Vec3.atCenterOf(t)) <= REACH;
+        ClientLevel level = bb.get(AIKeys.LEVEL);
+        if (t == null) {
+            return false;
+        }
+        Vec3 eye = p.getEyePosition();
+        return eye.distanceTo(Vec3.atCenterOf(t)) <= REACH && clearLine(level, eye, t);
     }
 
     static Status breakBlock(Blackboard bb) {
@@ -263,28 +292,54 @@ public final class MineTasks {
             return Status.RUNNING;
         }
         if (!inReach(bb)) {
-            Breaker.abort(bb);
-            bb.set(AIKeys.TARGET, null);
-            return Status.RUNNING;
+            // We arrived but still cannot see the block: give up on this one and pick another.
+            return dropTarget(bb);
         }
         return Breaker.step(bb, t) == Breaker.Result.FAILED ? Status.FAILURE : Status.RUNNING;
     }
 
-    /** Steps toward the broken block's cell for a few ticks so dropped items are picked up. */
+    private static ItemEntity nearestDrop(ClientLevel level, LocalPlayer p) {
+        ItemEntity best = null;
+        double bestD = Double.MAX_VALUE;
+        for (ItemEntity item : level.getEntitiesOfClass(ItemEntity.class, p.getBoundingBox().inflate(6.0))) {
+            if (item.isRemoved()) {
+                continue;
+            }
+            double d = item.distanceToSqr(p);
+            if (d < bestD) {
+                bestD = d;
+                best = item;
+            }
+        }
+        return best;
+    }
+
+    /** Walks to the nearest dropped item for a short while so it gets picked up. */
     static Status collect(Blackboard bb) {
+        LocalPlayer p = bb.get(AIKeys.PLAYER);
+        ClientLevel level = bb.get(AIKeys.LEVEL);
         int left = bb.getOrDefault(AIKeys.COLLECT, 0) - 1;
         bb.set(AIKeys.COLLECT, left <= 0 ? null : left);
-        BlockPos last = bb.get(AIKeys.LAST_BROKEN);
-        LocalPlayer p = bb.get(AIKeys.PLAYER);
-        if (last != null) {
-            Vec3 c = Vec3.atCenterOf(last);
-            double dx = c.x - p.getX();
-            double dz = c.z - p.getZ();
-            if (Math.hypot(dx, dz) > 0.3) {
-                bb.set(AIKeys.YAW, (float) Math.toDegrees(Math.atan2(-dx, dz)));
-                bb.set(AIKeys.PITCH, 20.0f);
-                AIKeys.addActions(bb, InputOverride.FORWARD);
+        ItemEntity item = nearestDrop(level, p);
+        if (item == null) {
+            if (left < COLLECT_TICKS - COLLECT_GRACE) {
+                bb.set(AIKeys.COLLECT, null);
             }
+            return Status.RUNNING;
+        }
+        double dx = item.getX() - p.getX();
+        double dz = item.getZ() - p.getZ();
+        double dy = item.getY() - p.getY();
+        double hd = Math.hypot(dx, dz);
+        if (hd > 0.3) {
+            bb.set(AIKeys.YAW, (float) Math.toDegrees(Math.atan2(-dx, dz)));
+            bb.set(AIKeys.PITCH, 20.0f);
+            InputOverride.setDirection(dx / hd, dz / hd);
+            int actions = InputOverride.FORWARD;
+            if (dy > 0.6 && p.onGround() && hd < 1.5) {
+                actions |= InputOverride.JUMP;
+            }
+            AIKeys.addActions(bb, actions);
         }
         return Status.RUNNING;
     }

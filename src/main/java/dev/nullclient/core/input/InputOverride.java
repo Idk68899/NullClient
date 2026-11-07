@@ -10,7 +10,8 @@ import net.minecraft.world.phys.Vec3;
 /**
  * Single arbitrated channel through which the AI engine and the macro player drive the local player.
  * First it presses the real key bindings each tick. If that visibly fails to move the player, it falls back
- * to setting the player's velocity directly at vanilla walking and sprinting speeds.
+ * to setting the player's velocity directly at vanilla walking and sprinting speeds, heading in a world-space
+ * direction so it does not depend on where the camera is pointing.
  */
 public final class InputOverride {
     public static final int FORWARD = 1;
@@ -33,6 +34,9 @@ public final class InputOverride {
 
     private static volatile String owner;
     private static volatile int actions;
+    private static volatile boolean hasDir;
+    private static volatile double dirX;
+    private static volatile double dirZ;
     private static boolean driving;
     private static boolean velocityMode;
     private static boolean haveLast;
@@ -58,6 +62,7 @@ public final class InputOverride {
         if (who.equals(owner)) {
             owner = null;
             actions = 0;
+            hasDir = false;
         }
     }
 
@@ -83,6 +88,17 @@ public final class InputOverride {
 
     public static boolean velocityMode() {
         return velocityMode;
+    }
+
+    /** World-space unit direction to move in when in direct-movement mode (set by the path follower each tick). */
+    public static void setDirection(double x, double z) {
+        dirX = x;
+        dirZ = z;
+        hasDir = true;
+    }
+
+    public static void clearDirection() {
+        hasDir = false;
     }
 
     /** Call once per client tick, after the AI and macros have set their actions. */
@@ -143,11 +159,18 @@ public final class InputOverride {
     }
 
     private static void applyVelocity(LocalPlayer p, int a) {
-        double yaw = Math.toRadians(p.getYRot());
         double forward = (has(a, FORWARD) ? 1.0 : 0.0) - (has(a, BACK) ? 1.0 : 0.0);
         double strafe = (has(a, LEFT) ? 1.0 : 0.0) - (has(a, RIGHT) ? 1.0 : 0.0);
-        double dx = -Math.sin(yaw) * forward + Math.cos(yaw) * strafe;
-        double dz = Math.cos(yaw) * forward + Math.sin(yaw) * strafe;
+        double dx;
+        double dz;
+        if (hasDir && has(a, FORWARD)) {
+            dx = dirX;
+            dz = dirZ;
+        } else {
+            double yaw = Math.toRadians(p.getYRot());
+            dx = -Math.sin(yaw) * forward + Math.cos(yaw) * strafe;
+            dz = Math.cos(yaw) * forward + Math.sin(yaw) * strafe;
+        }
         double len = Math.hypot(dx, dz);
         Vec3 v = p.getDeltaMovement();
         double vy = v.y;

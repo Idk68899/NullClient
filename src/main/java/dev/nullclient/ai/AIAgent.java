@@ -3,18 +3,29 @@ package dev.nullclient.ai;
 import dev.nullclient.ai.bt.Blackboard;
 import dev.nullclient.ai.bt.Node;
 import dev.nullclient.ai.bt.Status;
+import dev.nullclient.ai.nav.AStarPathfinder;
+import dev.nullclient.ai.nav.Path;
+import dev.nullclient.ai.nav.PathFollower;
+import dev.nullclient.ai.nav.PathNode;
+import dev.nullclient.ai.world.WorldScanner;
 import dev.nullclient.core.input.InputOverride;
 import dev.nullclient.core.session.Profile;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
+
+import java.util.List;
 
 /** A behavior tree bound to one local profile. Drives the local player while that profile is active. */
 public final class AIAgent {
     public enum State { RUNNING, SUSPENDED, SUCCEEDED, FAILED, CANCELLED }
 
     public static final String OWNER = "ai";
+    private static final int SCAN_RADIUS = 96;
 
     private final Profile profile;
     private final String label;
@@ -23,6 +34,11 @@ public final class AIAgent {
     private State state = State.RUNNING;
     private String message = "";
     private long ticks;
+
+    private String seenSpec;
+    private BlockPos seenTarget;
+    private Path seenPath;
+    private boolean seenExploring;
 
     public AIAgent(Profile profile, String label, Node root, Blackboard bb) {
         this.profile = profile;
@@ -66,6 +82,91 @@ public final class AIAgent {
         this.message = msg == null ? "" : msg;
     }
 
+    /** One-line description of what the agent is doing right now, for the action bar. */
+    public String thought() {
+        String spec = bb.get(AIKeys.MINE_BLOCK);
+        String clean = spec == null ? "" : spec.replace("=", "");
+        BlockPos target = bb.get(AIKeys.TARGET);
+        Path path = bb.get(AIKeys.PATH);
+        AStarPathfinder.Search search = bb.get(AIKeys.SEARCH);
+        if (bb.getOrDefault(AIKeys.EXPLORING, false)) {
+            return "exploring - nothing found nearby";
+        }
+        if (search != null) {
+            return "planning a route (" + search.expansions() + " positions checked)";
+        }
+        if (path != null) {
+            PathFollower f = bb.get(AIKeys.FOLLOWER);
+            int idx = f == null ? 0 : f.index();
+            PathNode n = idx < path.size() ? path.get(idx) : path.last();
+            return "walking: step " + idx + "/" + (path.size() - 1) + " (" + n.move.name().toLowerCase() + ")";
+        }
+        if (target != null) {
+            return "mining " + clean + " at " + target.toShortString();
+        }
+        if (spec != null) {
+            return "scanning for " + clean;
+        }
+        return label;
+    }
+
+    /** Posts a chat line whenever the agent picks a new target, route, or starts exploring. */
+    private void narrate(LocalPlayer p, ClientLevel level) {
+        String spec = bb.get(AIKeys.MINE_BLOCK);
+        if (spec == null) {
+            seenSpec = null;
+        } else if (!spec.equals(seenSpec)) {
+            seenSpec = spec;
+            String clean = spec.replace("=", "");
+            if (WorldScanner.INSTANCE.covers(spec)) {
+                List<BlockPos> found = WorldScanner.INSTANCE.find(spec, p.blockPosition(), SCAN_RADIUS, 5000);
+                if (found.isEmpty()) {
+                    Say.line("scanning for " + clean + ": none indexed within " + SCAN_RADIUS + " blocks");
+                } else {
+                    double d = Math.sqrt(found.get(0).distSqr(p.blockPosition()));
+                    Say.line("scanning for " + clean + ": " + found.size() + " found within " + SCAN_RADIUS
+                            + " blocks, nearest " + Math.round(d) + " away");
+                }
+            } else {
+                Say.line("scanning for " + clean + ": checking nearby blocks directly");
+            }
+        }
+
+        BlockPos target = bb.get(AIKeys.TARGET);
+        if (target == null) {
+            seenTarget = null;
+        } else if (!target.equals(seenTarget)) {
+            seenTarget = target;
+            String id = BuiltInRegistries.BLOCK.getKey(level.getBlockState(target).getBlock()).getPath();
+            double d = Math.sqrt(target.distSqr(p.blockPosition()));
+            Say.line("target: " + id + " at " + target.toShortString() + " (" + Math.round(d) + " blocks away)");
+        }
+
+        Path path = bb.get(AIKeys.PATH);
+        if (path == null) {
+            seenPath = null;
+        } else if (path != seenPath) {
+            seenPath = path;
+            if (path.size() > 1) {
+                int dig = 0;
+                for (int i = 1; i < path.size(); i++) {
+                    if (path.get(i).move.isDig()) {
+                        dig++;
+                    }
+                }
+                Say.line("route: " + (path.size() - 1) + " steps"
+                        + (dig > 0 ? ", digging through rock for " + dig + " of them" : "")
+                        + (path.partial() ? ", partial (will replan on arrival)" : ""));
+            }
+        }
+
+        boolean exploring = bb.getOrDefault(AIKeys.EXPLORING, false);
+        if (exploring && !seenExploring) {
+            Say.line("nothing indexed nearby - exploring to load new chunks");
+        }
+        seenExploring = exploring;
+    }
+
     /** Runs one tick. Returns the terminal state if the tree finished, otherwise null. */
     State tick(Minecraft mc) {
         LocalPlayer p = mc.player;
@@ -101,6 +202,11 @@ public final class AIAgent {
         if (pitch != null) {
             float cur = p.getXRot();
             p.setXRot(Mth.clamp(cur + Mth.clamp(pitch - cur, -20.0f, 20.0f), -90.0f, 90.0f));
+        }
+
+        narrate(p, level);
+        if (ticks % 6 == 0) {
+            p.sendOverlayMessage(Component.literal("[AI] " + label + " | " + thought()));
         }
 
         return switch (s) {

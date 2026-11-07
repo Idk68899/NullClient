@@ -23,8 +23,10 @@ import java.util.concurrent.ThreadLocalRandom;
 /** Leaf implementations and tree builders for navigation tasks. */
 public final class NavTasks {
     private static final int MAX_REPLANS = 12;
-    private static final int SEARCH_BUDGET_PER_TICK = 400;
-    private static final int MAX_EXPANSIONS = 25_000;
+    private static final long SEARCH_NANOS = 10_000_000L;
+    private static final int SEARCH_CHUNK = 50;
+    private static final int MAX_EXPANSIONS = 15_000;
+    private static final int MAX_EXPANSIONS_DIG = 8_000;
 
     private NavTasks() {
     }
@@ -115,10 +117,16 @@ public final class NavTasks {
                 return Status.RUNNING;
             }
             boolean dig = bb.getOrDefault(AIKeys.ALLOW_DIG, false);
-            search = new AStarPathfinder.Search(new WorldView(level), p.blockPosition(), goal, MAX_EXPANSIONS, dig);
+            search = new AStarPathfinder.Search(new WorldView(level), p.blockPosition(), goal,
+                    dig ? MAX_EXPANSIONS_DIG : MAX_EXPANSIONS, dig);
             bb.set(AIKeys.SEARCH, search);
         }
-        switch (search.step(SEARCH_BUDGET_PER_TICK)) {
+        long end = System.nanoTime() + SEARCH_NANOS;
+        AStarPathfinder.State st = search.state();
+        while (st == AStarPathfinder.State.RUNNING && System.nanoTime() < end) {
+            st = search.step(SEARCH_CHUNK);
+        }
+        switch (st) {
             case RUNNING:
                 return Status.RUNNING;
             case FOUND:

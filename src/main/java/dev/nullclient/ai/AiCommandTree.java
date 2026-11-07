@@ -7,11 +7,11 @@ import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import dev.nullclient.NullClient;
 import dev.nullclient.core.event.Events;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.client.Minecraft;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.core.registries.BuiltInRegistries;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -29,9 +29,9 @@ public final class AiCommandTree {
     }
 
     public static void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {
-        dispatcher.register(ClientCommandManager.literal("ai")
+        dispatcher.register(ClientCommands.literal("ai")
                 .executes(ctx -> run(".ai help"))
-                .then(ClientCommandManager.argument("request", StringArgumentType.greedyString())
+                .then(ClientCommands.argument("request", StringArgumentType.greedyString())
                         .suggests(AiCommandTree::suggest)
                         .executes(ctx -> run(".ai " + StringArgumentType.getString(ctx, "request")))));
     }

@@ -81,13 +81,18 @@ public final class AICommand {
         if (t.length == 1 || t[1].equalsIgnoreCase("help")) {
             reply("just say what you want: .ai get me a diamond pickaxe", ChatFormatting.GRAY);
             reply("also: goto x y z | mine <block> [n] | wander | follow <player> | stop", ChatFormatting.GRAY);
-            reply(".ai menu | new <name> | profiles | list | stopall | debug", ChatFormatting.GRAY);
+            reply(".ai menu | talk | new <name> | profiles | list | stopall | debug", ChatFormatting.GRAY);
             return;
         }
         String first = t[1].toLowerCase(Locale.ROOT);
         switch (first) {
             case "debug" -> {
                 debug();
+                return;
+            }
+            case "talk" -> {
+                Say.verbose = !Say.verbose;
+                reply("chat narration " + (Say.verbose ? "ON" : "OFF") + " (the action bar always shows live status)", ChatFormatting.GRAY);
                 return;
             }
             case "menu" -> {
@@ -314,9 +319,11 @@ public final class AICommand {
         NullUI ui = NullClient.get().ui();
         reply("menu: " + ui.status() + ", frame hook " + (InputOverride.uiHookRan ? "running" : "NOT running"),
                 InputOverride.uiHookRan && !ui.status().startsWith("FAILED") ? ChatFormatting.GREEN : ChatFormatting.RED);
-        reply("key driver: " + (InputOverride.driving() ? "pressing keys now" : "idle") + ", input mixin " + (InputOverride.inputHookRan ? "ran" : "did not run"), ChatFormatting.GRAY);
+        reply("movement: " + (InputOverride.velocityMode() ? "DIRECT (keys did not move you)" : "key presses")
+                + (InputOverride.driving() ? ", driving now" : ", idle"), ChatFormatting.GRAY);
         Profile a = profiles.active();
-        reply("active profile: " + (a == null ? "none" : a.name) + ", agents: " + ai.agents().size(), ChatFormatting.GRAY);
+        reply("active profile: " + (a == null ? "none" : a.name) + ", agents: " + ai.agents().size()
+                + ", chat narration: " + (Say.verbose ? "on" : "off"), ChatFormatting.GRAY);
         LocalPlayer p = Minecraft.getInstance().player;
         if (p != null) {
             BlockPos o = p.blockPosition();

@@ -13,11 +13,18 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
-/** Breaks one block per call sequence: aims, picks the fastest hotbar tool, and keeps mining until it is gone. */
+/**
+ * Breaks one block per call sequence: aims, picks the fastest hotbar tool, and keeps mining until it is gone.
+ * If the camera cannot be turned in time it breaks the block anyway (the game only requires reach).
+ */
 public final class Breaker {
     public enum Result { BUSY, DONE, FAILED }
 
     private static final double REACH = 4.5;
+    private static final int AIM_PATIENCE = 12;
+
+    private static BlockPos aimTarget;
+    private static int aimWait;
 
     private Breaker() {
     }
@@ -50,9 +57,16 @@ public final class Breaker {
         float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.hypot(dx, dz)));
         bb.set(AIKeys.YAW, yaw);
         bb.set(AIKeys.PITCH, pitch);
-        if (Math.abs(Mth.wrapDegrees(yaw - p.getYRot())) > 12.0f || Math.abs(pitch - p.getXRot()) > 12.0f) {
+
+        if (!pos.equals(aimTarget)) {
+            aimTarget = pos;
+            aimWait = 0;
+        }
+        boolean aimed = Math.abs(Mth.wrapDegrees(yaw - p.getYRot())) <= 12.0f && Math.abs(pitch - p.getXRot()) <= 12.0f;
+        if (!aimed && aimWait++ < AIM_PATIENCE) {
             return Result.BUSY;
         }
+
         selectBestTool(p, s);
         Direction face = Direction.getApproximateNearest(p.getX() - c.x, p.getEyeY() - c.y, p.getZ() - c.z);
         if (!pos.equals(bb.get(AIKeys.CUR_BREAK))) {
@@ -71,6 +85,8 @@ public final class Breaker {
             mc.gameMode.stopDestroyBlock();
         }
         bb.set(AIKeys.CUR_BREAK, null);
+        aimTarget = null;
+        aimWait = 0;
     }
 
     public static void selectBestTool(LocalPlayer p, BlockState s) {

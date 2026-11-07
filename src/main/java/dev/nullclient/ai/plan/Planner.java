@@ -10,8 +10,9 @@ import java.util.Set;
 /**
  * Backward-chaining planner. To obtain an item it finds a way (gather, craft or smelt), recursively plans
  * the prerequisites (tools, ingredients, stations, fuel) against a simulated inventory, and emits steps in
- * execution order. Smelting is split into "load furnace" and "collect"; collect steps are then moved as late as
- * possible so the bot can work while the furnace cooks. All game rules come from {@link Knowledge}.
+ * execution order. Afterwards, tool-free gather steps for the same item are merged into one trip, and smelting
+ * is split into "load furnace" and "collect" with the collect moved as late as possible. All game rules come
+ * from {@link Knowledge}.
  */
 public final class Planner {
     public static final class PlanException extends RuntimeException {
@@ -35,7 +36,33 @@ public final class Planner {
     public static List<Step> plan(Map<String, Integer> have, Set<String> stations, String item, int count) {
         Planner p = new Planner(new HashMap<>(have), new HashSet<>(stations));
         p.need(item, count);
-        return defer(p.steps);
+        return hoistGathers(defer(p.steps));
+    }
+
+    /** Merges repeated tool-free gathers of the same item (logs, dirt, sand...) into the first occurrence. */
+    private static List<Step> hoistGathers(List<Step> in) {
+        List<Step> out = new ArrayList<>(in);
+        for (int i = 0; i < out.size(); i++) {
+            Step s = out.get(i);
+            if (s.kind() != Step.Kind.GATHER || !s.gather().tool.isEmpty()) {
+                continue;
+            }
+            int base = s.count() - s.delta();
+            int total = s.delta();
+            for (int j = i + 1; j < out.size(); ) {
+                Step o = out.get(j);
+                if (o.kind() == Step.Kind.GATHER && o.gather().tool.isEmpty() && o.item().equals(s.item())) {
+                    total += o.delta();
+                    out.remove(j);
+                } else {
+                    j++;
+                }
+            }
+            if (total != s.delta()) {
+                out.set(i, new Step(Step.Kind.GATHER, s.item(), base + total, s.gather(), null, null, total));
+            }
+        }
+        return out;
     }
 
     private static List<Step> defer(List<Step> in) {
@@ -129,7 +156,7 @@ public final class Planner {
         if (!g.tool.isEmpty() && !hasAny(g.tool)) {
             need(g.tool.get(0), 1);
         }
-        steps.add(new Step(Step.Kind.GATHER, token, count, g, null, null));
+        steps.add(new Step(Step.Kind.GATHER, token, count, g, null, null, missing));
         inv.merge(item, missing, Integer::sum);
     }
 

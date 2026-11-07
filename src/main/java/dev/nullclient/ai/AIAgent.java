@@ -26,6 +26,7 @@ public final class AIAgent {
 
     public static final String OWNER = "ai";
     private static final int SCAN_RADIUS = 96;
+    private static final int ROUTE_REPEAT_TICKS = 200;
 
     private final Profile profile;
     private final String label;
@@ -39,6 +40,8 @@ public final class AIAgent {
     private BlockPos seenTarget;
     private Path seenPath;
     private boolean seenExploring;
+    private String lastRouteText = "";
+    private long lastRouteTick = -1000;
 
     public AIAgent(Profile profile, String label, Node root, Blackboard bb) {
         this.profile = profile;
@@ -110,7 +113,7 @@ public final class AIAgent {
         return label;
     }
 
-    /** Posts a chat line whenever the agent picks a new target, route, or starts exploring. */
+    /** Chat narration (only when ".ai talk" is on): new target, new route, exploring. */
     private void narrate(LocalPlayer p, ClientLevel level) {
         String spec = bb.get(AIKeys.MINE_BLOCK);
         if (spec == null) {
@@ -121,14 +124,14 @@ public final class AIAgent {
             if (WorldScanner.INSTANCE.covers(spec)) {
                 List<BlockPos> found = WorldScanner.INSTANCE.find(spec, p.blockPosition(), SCAN_RADIUS, 5000);
                 if (found.isEmpty()) {
-                    Say.line("scanning for " + clean + ": none indexed within " + SCAN_RADIUS + " blocks");
+                    Say.talk("scanning for " + clean + ": none indexed within " + SCAN_RADIUS + " blocks");
                 } else {
                     double d = Math.sqrt(found.get(0).distSqr(p.blockPosition()));
-                    Say.line("scanning for " + clean + ": " + found.size() + " found within " + SCAN_RADIUS
+                    Say.talk("scanning for " + clean + ": " + found.size() + " found within " + SCAN_RADIUS
                             + " blocks, nearest " + Math.round(d) + " away");
                 }
             } else {
-                Say.line("scanning for " + clean + ": checking nearby blocks directly");
+                Say.talk("scanning for " + clean + ": checking nearby blocks directly");
             }
         }
 
@@ -139,7 +142,7 @@ public final class AIAgent {
             seenTarget = target;
             String id = BuiltInRegistries.BLOCK.getKey(level.getBlockState(target).getBlock()).getPath();
             double d = Math.sqrt(target.distSqr(p.blockPosition()));
-            Say.line("target: " + id + " at " + target.toShortString() + " (" + Math.round(d) + " blocks away)");
+            Say.talk("target: " + id + " at " + target.toShortString() + " (" + Math.round(d) + " blocks away)");
         }
 
         Path path = bb.get(AIKeys.PATH);
@@ -154,15 +157,20 @@ public final class AIAgent {
                         dig++;
                     }
                 }
-                Say.line("route: " + (path.size() - 1) + " steps"
+                String text = "route: " + (path.size() - 1) + " steps"
                         + (dig > 0 ? ", digging through rock for " + dig + " of them" : "")
-                        + (path.partial() ? ", partial (will replan on arrival)" : ""));
+                        + (path.partial() ? ", partial (will replan on arrival)" : "");
+                if (!text.equals(lastRouteText) || ticks - lastRouteTick > ROUTE_REPEAT_TICKS) {
+                    Say.talk(text);
+                    lastRouteText = text;
+                    lastRouteTick = ticks;
+                }
             }
         }
 
         boolean exploring = bb.getOrDefault(AIKeys.EXPLORING, false);
         if (exploring && !seenExploring) {
-            Say.line("nothing indexed nearby - exploring to load new chunks");
+            Say.talk("nothing indexed nearby - exploring to load new chunks");
         }
         seenExploring = exploring;
     }
@@ -180,6 +188,7 @@ public final class AIAgent {
         bb.set(AIKeys.ACTIONS, 0);
         bb.set(AIKeys.YAW, null);
         bb.set(AIKeys.PITCH, null);
+        InputOverride.clearDirection();
 
         Status s;
         try {
@@ -204,9 +213,14 @@ public final class AIAgent {
             p.setXRot(Mth.clamp(cur + Mth.clamp(pitch - cur, -20.0f, 20.0f), -90.0f, 90.0f));
         }
 
-        narrate(p, level);
+        if (Say.verbose) {
+            narrate(p, level);
+        }
         if (ticks % 6 == 0) {
-            p.sendOverlayMessage(Component.literal("[AI] " + label + " | " + thought()));
+            String aim = yaw == null ? "" : " | yaw " + Math.round(p.getYRot()) + ">" + Math.round(yaw)
+                    + " pitch " + Math.round(p.getXRot()) + ">" + (pitch == null ? "-" : Long.toString(Math.round(pitch)));
+            String mode = InputOverride.velocityMode() ? " [direct]" : "";
+            p.sendOverlayMessage(Component.literal("[AI] " + label + " | " + thought() + aim + mode));
         }
 
         return switch (s) {

@@ -1,13 +1,16 @@
 package dev.nullclient.core.input;
 
+import dev.nullclient.ai.Say;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Single arbitrated channel through which the AI engine and the macro player drive the local player.
- * Movement is applied by pressing the real key bindings each tick, so it works regardless of which input
- * class the game or launcher uses.
+ * First it presses the real key bindings each tick. If that visibly fails to move the player, it falls back
+ * to setting the player's velocity directly at vanilla walking and sprinting speeds.
  */
 public final class InputOverride {
     public static final int FORWARD = 1;
@@ -22,9 +25,21 @@ public final class InputOverride {
     public static volatile boolean inputHookRan;
     public static volatile boolean uiHookRan;
 
+    private static final double WALK_SPEED = 0.2158;
+    private static final double SPRINT_SPEED = 0.2806;
+    private static final double SNEAK_SPEED = 0.0647;
+    private static final double JUMP_VELOCITY = 0.42;
+    private static final int STALL_WINDOW = 25;
+
     private static volatile String owner;
     private static volatile int actions;
     private static boolean driving;
+    private static boolean velocityMode;
+    private static boolean haveLast;
+    private static double lastX;
+    private static double lastZ;
+    private static double moved;
+    private static int window;
 
     private InputOverride() {
     }
@@ -66,21 +81,95 @@ public final class InputOverride {
         return driving;
     }
 
+    public static boolean velocityMode() {
+        return velocityMode;
+    }
+
     /** Call once per client tick, after the AI and macros have set their actions. */
     public static void drive(Minecraft mc) {
         Options o = mc.options;
+        LocalPlayer p = mc.player;
         if (o == null) {
             return;
         }
-        if (mc.player == null || !active()) {
+        if (p == null || !active()) {
             if (driving) {
                 press(o, 0);
                 driving = false;
             }
+            haveLast = false;
+            window = 0;
+            moved = 0;
             return;
         }
-        press(o, actions);
+        int a = actions;
+        if (velocityMode) {
+            press(o, 0);
+            applyVelocity(p, a);
+        } else {
+            press(o, a);
+            watchForStall(p, a);
+        }
         driving = true;
+    }
+
+    private static void watchForStall(LocalPlayer p, int a) {
+        double x = p.getX();
+        double z = p.getZ();
+        if (!haveLast) {
+            lastX = x;
+            lastZ = z;
+            haveLast = true;
+            return;
+        }
+        double d = Math.hypot(x - lastX, z - lastZ);
+        lastX = x;
+        lastZ = z;
+        if (has(a, FORWARD) && p.onGround()) {
+            moved += d;
+            window++;
+        } else {
+            moved = 0;
+            window = 0;
+        }
+        if (window >= STALL_WINDOW) {
+            if (moved < 0.4) {
+                velocityMode = true;
+                Say.line("pressing keys did not move you - switching to direct movement");
+            }
+            moved = 0;
+            window = 0;
+        }
+    }
+
+    private static void applyVelocity(LocalPlayer p, int a) {
+        double yaw = Math.toRadians(p.getYRot());
+        double forward = (has(a, FORWARD) ? 1.0 : 0.0) - (has(a, BACK) ? 1.0 : 0.0);
+        double strafe = (has(a, LEFT) ? 1.0 : 0.0) - (has(a, RIGHT) ? 1.0 : 0.0);
+        double dx = -Math.sin(yaw) * forward + Math.cos(yaw) * strafe;
+        double dz = Math.cos(yaw) * forward + Math.sin(yaw) * strafe;
+        double len = Math.hypot(dx, dz);
+        Vec3 v = p.getDeltaMovement();
+        double vy = v.y;
+        if (len > 1.0e-6) {
+            double speed = has(a, SNEAK) ? SNEAK_SPEED : (has(a, SPRINT) && forward > 0 ? SPRINT_SPEED : WALK_SPEED);
+            if (p.isInWater()) {
+                speed *= 0.5;
+            }
+            dx = dx / len * speed;
+            dz = dz / len * speed;
+        } else {
+            dx = 0.0;
+            dz = 0.0;
+        }
+        if (has(a, JUMP)) {
+            if (p.onGround()) {
+                vy = JUMP_VELOCITY;
+            } else if (p.isInWater() || p.isInLava()) {
+                vy = 0.1;
+            }
+        }
+        p.setDeltaMovement(dx, vy, dz);
     }
 
     private static void press(Options o, int bits) {

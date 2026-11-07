@@ -12,6 +12,13 @@ public final class Path {
         this.partial = partial;
     }
 
+    /** A two-node path for a single move, used by the tunnelling controller. */
+    public static Path singleStep(int sx, int sy, int sz, MoveType move, int tx, int ty, int tz) {
+        PathNode a = new PathNode(sx, sy, sz, MoveType.START, 0.0, 0.0, null);
+        PathNode b = new PathNode(tx, ty, tz, move, 1.0, 0.0, a);
+        return new Path(List.of(a, b), false);
+    }
+
     public int size() {
         return nodes.size();
     }

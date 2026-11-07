@@ -17,8 +17,7 @@ import java.util.Set;
 
 /**
  * Think-act loop for "hold N of item": observe inventory and nearby stations, plan, execute the plan as a
- * behavior tree, then observe again. Failures trigger a re-plan, up to a limit. Tunnelling is enabled for
- * everything it does.
+ * behavior tree, then observe again. Failures trigger a re-plan, up to a limit.
  */
 public final class GoalNode implements Node {
     private static final int MAX_PLANS = 5;
@@ -36,7 +35,6 @@ public final class GoalNode implements Node {
 
     @Override
     public Status tick(Blackboard bb) {
-        bb.set(AIKeys.ALLOW_DIG, true);
         LocalPlayer p = bb.get(AIKeys.PLAYER);
         if (Inv.count(p, item) >= count) {
             return Status.SUCCESS;
@@ -57,10 +55,10 @@ public final class GoalNode implements Node {
             if (steps.isEmpty()) {
                 return Status.SUCCESS;
             }
-            Say.line("plan " + plans + " for " + item + " x" + count + ":");
+            Say.talk("plan " + plans + " for " + item + " x" + count + ":");
             int i = 1;
             for (Step s : steps) {
-                Say.line("  " + i++ + ". " + s.describe());
+                Say.talk("  " + i++ + ". " + s.describe());
             }
             tree = new Sequence("Plan", true, steps.stream().map(StepTasks::node).toArray(Node[]::new));
             bb.set(AIKeys.FAIL_REASON, null);

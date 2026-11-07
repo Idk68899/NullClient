@@ -16,19 +16,22 @@ import java.util.List;
 /**
  * Walks a {@link Path} by emitting movement actions and a target view angle into the blackboard.
  * Handles sprinting, step-ups, descents, swimming, parkour take-off and tunnelling: before a dig move it
- * breaks the blocks in the way, one at a time. Reports failure when stuck, off-route, or when upcoming nodes
- * are no longer safe.
+ * breaks the blocks in the way, one at a time. It waits briefly to turn toward the next node but never forever,
+ * so a camera that cannot be turned does not freeze the agent. Reports failure when stuck, off-route, or when
+ * upcoming nodes are no longer safe.
  */
 public final class PathFollower {
     public enum Result { RUNNING, DONE, FAILED }
 
     private static final int STUCK_LIMIT = 60;
     private static final int VALIDATE_EVERY = 8;
+    private static final int TURN_PATIENCE = 15;
 
     private final Path path;
     private int index = 1;
     private int consumed;
     private int stuck;
+    private int turnWait;
     private double bestDistance = Double.MAX_VALUE;
     private int age;
 
@@ -154,6 +157,9 @@ public final class PathFollower {
         float yaw = hd > 0.05 ? (float) Math.toDegrees(Math.atan2(-dx, dz)) : p.getYRot();
         bb.set(AIKeys.YAW, yaw);
         bb.set(AIKeys.PITCH, 12.0f);
+        if (hd > 0.05) {
+            InputOverride.setDirection(dx / hd, dz / hd);
+        }
 
         int actions = InputOverride.FORWARD;
         switch (t.move) {
@@ -182,9 +188,17 @@ public final class PathFollower {
         if (p.isInWater() || p.isInLava()) {
             actions |= InputOverride.JUMP;
         }
+
+        // Wait a moment to turn toward the next node, but never forever: if the camera will not turn,
+        // keep going so the movement driver can detect the stall and switch to direct movement.
         float diff = Mth.wrapDegrees(yaw - p.getYRot());
-        if (grounded && Math.abs(diff) > 50.0f) {
-            actions = 0;
+        if (grounded && Math.abs(diff) > 50.0f && !InputOverride.velocityMode()) {
+            if (turnWait < TURN_PATIENCE) {
+                turnWait++;
+                actions = 0;
+            }
+        } else {
+            turnWait = 0;
         }
         AIKeys.addActions(bb, actions);
         return Result.RUNNING;

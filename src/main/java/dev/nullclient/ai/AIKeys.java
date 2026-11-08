@@ -38,6 +38,7 @@ public final class AIKeys {
 
     // navigation
     public static final Key<Boolean> ALLOW_DIG = Key.of("allowDig", Boolean.class);
+    public static final Key<BadSet> AVOID = Key.of("avoid", BadSet.class);
 
     // mining
     public static final Key<BlockPos> TARGET = Key.of("target", BlockPos.class);
@@ -55,6 +56,7 @@ public final class AIKeys {
     public static final Key<Boolean> BURIED = Key.of("buried", Boolean.class);
     public static final Key<Integer> DIG_STEPS = Key.of("digSteps", Integer.class);
     public static final Key<Integer> GRAB_TICK = Key.of("grabTick", Integer.class);
+    public static final Key<Integer> SCAN_WAIT = Key.of("scanWait", Integer.class);
 
     // planner / stations / inventory clicks
     public static final Key<String> GOAL_ITEM = Key.of("goalItem", String.class);

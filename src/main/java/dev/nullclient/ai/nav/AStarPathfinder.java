@@ -14,9 +14,10 @@ import java.util.Set;
  * Incremental A* over block-grid player positions (feet cell).
  *
  * <p>Move set: walk, diagonal, step-up, descend (up to {@value #MAX_FALL} blocks), parkour jumps (2-4 blocks),
- * swim up/down inside water, and, when digging is allowed, DIG_WALK / DIG_DOWN / DIG_UP moves that tunnel through
- * safe solid blocks. In dig mode the heuristic is weighted so tunnels head almost straight for the goal.
- * When the node budget runs out the search yields a partial path to the closest explored node.
+ * swim up/down inside water, and, when allowed, DIG_WALK / DIG_DOWN / DIG_UP moves that tunnel through safe
+ * solid blocks plus PILLAR (jump and place a block underneath to climb). In dig mode the heuristic is weighted
+ * so tunnels head almost straight for the goal. When the node budget runs out the search yields a partial path
+ * to the closest explored node.
  */
 public final class AStarPathfinder {
     public static final int MAX_FALL = 3;
@@ -34,9 +35,11 @@ public final class AStarPathfinder {
         private static final double DIG_COST = 3.0;
         private static final double DIG_HEURISTIC_WEIGHT = 3.0;
         private static final double WATER_EXTRA = 0.6;
+        private static final double PILLAR_COST = 5.0;
 
         private final WorldView v;
         private final boolean allowDig;
+        private final boolean canPillar;
         private final int gx;
         private final int gy;
         private final int gz;
@@ -52,12 +55,17 @@ public final class AStarPathfinder {
         private State state = State.RUNNING;
 
         public Search(WorldView view, BlockPos from, BlockPos goal, int maxExpansions) {
-            this(view, from, goal, maxExpansions, false);
+            this(view, from, goal, maxExpansions, false, false);
         }
 
         public Search(WorldView view, BlockPos from, BlockPos goal, int maxExpansions, boolean allowDig) {
+            this(view, from, goal, maxExpansions, allowDig, false);
+        }
+
+        public Search(WorldView view, BlockPos from, BlockPos goal, int maxExpansions, boolean allowDig, boolean canPillar) {
             this.v = view;
             this.allowDig = allowDig;
+            this.canPillar = canPillar;
             this.gx = goal.getX();
             this.gy = goal.getY();
             this.gz = goal.getZ();
@@ -173,6 +181,11 @@ public final class AStarPathfinder {
                 if (v.isWater(x, y + 1, z) && v.canStand(x, y + 1, z)) {
                     offer(n, x, y + 1, z, MoveType.SWIM, 1.2);
                 }
+            }
+
+            // climb by placing a block under our feet
+            if (canPillar && !v.isWater(x, y, z) && v.canStand(x, y, z) && v.bodyFree(x, y + 2, z)) {
+                offer(n, x, y + 1, z, MoveType.PILLAR, PILLAR_COST);
             }
 
             for (int[] d : CARDINAL) {

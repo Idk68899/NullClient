@@ -14,9 +14,9 @@ import java.util.Set;
  * Incremental A* over block-grid player positions (feet cell).
  *
  * <p>Move set: walk, diagonal, step-up, descend (up to {@value #MAX_FALL} blocks), parkour jumps (2-4 blocks),
- * and, when digging is allowed, DIG_WALK / DIG_DOWN / DIG_UP moves that tunnel through safe solid blocks.
- * In dig mode the heuristic is weighted so tunnels head almost straight for the goal instead of flooding the
- * rock. When the node budget runs out the search yields a partial path to the closest explored node.
+ * swim up/down inside water, and, when digging is allowed, DIG_WALK / DIG_DOWN / DIG_UP moves that tunnel through
+ * safe solid blocks. In dig mode the heuristic is weighted so tunnels head almost straight for the goal.
+ * When the node budget runs out the search yields a partial path to the closest explored node.
  */
 public final class AStarPathfinder {
     public static final int MAX_FALL = 3;
@@ -33,6 +33,7 @@ public final class AStarPathfinder {
         private static final int[] JUMP_DY = {1, 0, -1, -2};
         private static final double DIG_COST = 3.0;
         private static final double DIG_HEURISTIC_WEIGHT = 3.0;
+        private static final double WATER_EXTRA = 0.6;
 
         private final WorldView v;
         private final boolean allowDig;
@@ -143,7 +144,7 @@ public final class AStarPathfinder {
         private void offer(PathNode from, int x, int y, int z, MoveType move, double cost) {
             double extra = 0;
             if (v.isWater(x, y, z)) {
-                extra += 1.5;
+                extra += WATER_EXTRA;
             }
             if (v.nearHazard(x, y, z)) {
                 extra += 6.0;
@@ -163,6 +164,17 @@ public final class AStarPathfinder {
             int x = n.x;
             int y = n.y;
             int z = n.z;
+
+            // vertical swimming inside water
+            if (v.isWater(x, y, z)) {
+                if (v.isWater(x, y - 1, z) && v.canStand(x, y - 1, z)) {
+                    offer(n, x, y - 1, z, MoveType.SWIM, 1.2);
+                }
+                if (v.isWater(x, y + 1, z) && v.canStand(x, y + 1, z)) {
+                    offer(n, x, y + 1, z, MoveType.SWIM, 1.2);
+                }
+            }
+
             for (int[] d : CARDINAL) {
                 int dx = d[0];
                 int dz = d[1];
@@ -211,18 +223,15 @@ public final class AStarPathfinder {
             int feet = v.digCost(nx, y, nz);
             int head = v.digCost(nx, y + 1, nz);
 
-            // flat tunnel
             if (feet >= 0 && head >= 0 && feet + head > 0 && v.isSolidTop(nx, y - 1, nz)) {
                 offer(n, nx, y, nz, MoveType.DIG_WALK, 1.0 + DIG_COST * (feet + head));
             }
 
-            // staircase down: clear three cells, land one level lower on solid floor
             int below = v.digCost(nx, y - 1, nz);
             if (feet >= 0 && head >= 0 && below >= 0 && feet + head + below > 0 && v.isSolidTop(nx, y - 2, nz)) {
                 offer(n, nx, y - 1, nz, MoveType.DIG_DOWN, 1.5 + DIG_COST * (feet + head + below));
             }
 
-            // staircase up: headroom above us, plus feet and head of the cell one level higher
             int headroom = v.digCost(x, y + 2, z);
             int upFeet = head;
             int upHead = v.digCost(nx, y + 2, nz);

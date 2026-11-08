@@ -16,10 +16,11 @@ import java.util.List;
 
 /**
  * Walks a {@link Path} by emitting movement actions and a target view angle into the blackboard.
- * Handles sprinting, step-ups, descents, swimming, parkour take-off, tunnelling (breaking blocks in the way,
- * always the first block along the line of sight) and pillaring (jump, then place a block underneath).
- * It waits briefly to turn toward the next node but never forever. Reports failure when stuck, off-route,
- * or when upcoming nodes are no longer safe.
+ *
+ * <p>Smooth steering: on straight stretches it aims midway between the current and next node instead of at the
+ * current node's centre, so the heading changes gradually; sprint has hysteresis so it does not flicker. It also
+ * handles step-ups, descents, swimming, parkour take-off, tunnelling (breaking blocks in the way) and pillaring.
+ * On failure it records why, so the planner can route around it and ".ai why" can show it.
  */
 public final class PathFollower {
     public enum Result { RUNNING, DONE, FAILED }
@@ -35,6 +36,8 @@ public final class PathFollower {
     private int turnWait;
     private double bestDistance = Double.MAX_VALUE;
     private int age;
+    private boolean sprinting;
+    private String failure = "";
 
     public PathFollower(Path path) {
         this.path = path;
@@ -50,6 +53,25 @@ public final class PathFollower {
 
     public int index() {
         return index;
+    }
+
+    /** Why the last tick returned FAILED. */
+    public String failure() {
+        return failure;
+    }
+
+    /** The node the follower is currently heading for. */
+    public PathNode currentNode() {
+        return index < path.size() ? path.get(index) : path.last();
+    }
+
+    private Result fail(String why) {
+        failure = why;
+        return Result.FAILED;
+    }
+
+    private static String where(PathNode n) {
+        return n.move.name().toLowerCase() + " at " + n.x + "," + n.y + "," + n.z;
     }
 
     private static boolean passable(ClientLevel level, BlockPos pos) {
@@ -121,7 +143,7 @@ public final class PathFollower {
                     ok = view.canStand(n.x, n.y, n.z);
                 }
                 if (!ok) {
-                    return Result.FAILED;
+                    return fail("the way changed: " + where(n) + " is no longer valid");
                 }
             }
         }
@@ -133,7 +155,7 @@ public final class PathFollower {
         double hd = Math.hypot(dx, dz);
 
         if (hd > 6.0 || pos.y < t.y - 4.5) {
-            return Result.FAILED;
+            return fail("drifted off the route near " + where(t));
         }
 
         if (t.move.isDig()) {
@@ -141,9 +163,11 @@ public final class PathFollower {
                 if (passable(level, cell)) {
                     continue;
                 }
-                dev.nullclient.ai.task.Breaker.Result r = Breaker.step(bb, cell);
+                Breaker.Result r = Breaker.step(bb, cell);
                 if (r == Breaker.Result.FAILED) {
-                    return Result.FAILED;
+                    String reason = bb.get(AIKeys.FAIL_REASON);
+                    bb.set(AIKeys.FAIL_REASON, null);
+                    return fail("could not dig (" + (reason == null ? "unknown" : reason) + ") for " + where(t));
                 }
                 stuck = 0;
                 if (r == Breaker.Result.BUSY) {
@@ -157,20 +181,40 @@ public final class PathFollower {
             bestDistance = metric;
             stuck = 0;
         } else if (++stuck > STUCK_LIMIT) {
-            return Result.FAILED;
+            return fail("stuck for " + STUCK_LIMIT + " ticks heading for " + where(t));
         }
 
-        float yaw = hd > 0.05 ? (float) Math.toDegrees(Math.atan2(-dx, dz)) : p.getYRot();
+        // Smooth steering: aim midway toward the next node on straight stretches.
+        boolean nextFlat = index + 1 < path.size() && path.get(index + 1).move.isFlat();
+        double ax = t.x + 0.5;
+        double az = t.z + 0.5;
+        if (t.move.isFlat() && nextFlat) {
+            PathNode nx = path.get(index + 1);
+            ax = (ax + nx.x + 0.5) * 0.5;
+            az = (az + nx.z + 0.5) * 0.5;
+        }
+        double adx = ax - pos.x;
+        double adz = az - pos.z;
+        double ahd = Math.hypot(adx, adz);
+        float yaw = ahd > 0.05 ? (float) Math.toDegrees(Math.atan2(-adx, adz)) : p.getYRot();
         bb.set(AIKeys.YAW, yaw);
         bb.set(AIKeys.PITCH, 12.0f);
-        if (hd > 0.05) {
-            InputOverride.setDirection(dx / hd, dz / hd);
+        if (ahd > 0.05) {
+            InputOverride.setDirection(adx / ahd, adz / ahd);
+        }
+
+        // Sprint with hysteresis: start on straight flat stretches, stop near the end or when the move changes.
+        boolean flatChain = t.move.isFlat() && (index + 1 >= path.size() || path.get(index + 1).move.isFlat());
+        if (flatChain && !p.isInWater() && hd > 1.2 && path.size() - index > 1) {
+            sprinting = true;
+        } else if (!flatChain || hd < 0.6 || p.isInWater()) {
+            sprinting = false;
         }
 
         int actions = InputOverride.FORWARD;
         switch (t.move) {
             case WALK, DIAGONAL, DIG_WALK -> {
-                if (hd > 1.0 && !p.isInWater()) {
+                if (sprinting) {
                     actions |= InputOverride.SPRINT;
                 }
             }
@@ -203,8 +247,7 @@ public final class PathFollower {
                 }
                 if (!p.onGround() && pos.y >= prev.y + 1.02) {
                     if (Placer.count(p) == 0) {
-                        bb.set(AIKeys.FAIL_REASON, "no blocks to place for climbing");
-                        return Result.FAILED;
+                        return fail("no blocks to place for climbing");
                     }
                     Placer.placeInto(bb, new BlockPos(prev.x, prev.y, prev.z));
                 }
@@ -225,9 +268,10 @@ public final class PathFollower {
             }
         }
 
-        // Wait a moment to turn toward the next node, but never forever.
+        // Pause to turn only when almost standing still; never stop a run for a turn.
         float diff = Mth.wrapDegrees(yaw - p.getYRot());
-        if (grounded && Math.abs(diff) > 50.0f && !InputOverride.velocityMode() && t.move != MoveType.PILLAR) {
+        double speed = Math.hypot(p.getDeltaMovement().x, p.getDeltaMovement().z);
+        if (grounded && Math.abs(diff) > 70.0f && speed < 0.1 && !InputOverride.velocityMode() && t.move != MoveType.PILLAR) {
             if (turnWait < TURN_PATIENCE) {
                 turnWait++;
                 actions = 0;

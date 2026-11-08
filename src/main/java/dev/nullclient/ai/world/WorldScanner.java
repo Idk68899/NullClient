@@ -24,14 +24,14 @@ import java.util.Set;
 /**
  * Incremental block index. Each tick it rescans 16x16x16 sections around the player within a small time
  * budget (skipping sections whose palette holds nothing of interest), nearest first, and remembers where the
- * interesting blocks are. After a full pass it idles briefly before rescanning.
+ * interesting blocks are. After a full pass it idles for a while before rescanning.
  */
 public final class WorldScanner {
     public static final WorldScanner INSTANCE = new WorldScanner();
 
     private static final int RADIUS_CHUNKS = 6;
-    private static final long BUDGET_NANOS = 3_000_000L;
-    private static final int IDLE_TICKS = 60;
+    private static final long BUDGET_NANOS = 2_000_000L;
+    private static final int IDLE_TICKS = 200;
 
     private final Map<Long, Map<String, LongArrayList>> sections = new HashMap<>();
     private final Map<Block, String> interest = new HashMap<>();

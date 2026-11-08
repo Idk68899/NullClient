@@ -16,11 +16,16 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 
 import java.util.List;
 
-/** A behavior tree bound to one local profile. Drives the local player while that profile is active. */
+/**
+ * A behavior tree bound to one local profile. Drives the local player while that profile is active.
+ * Also keeps the player alive in water: when air runs low for the swim back up, it surfaces and only dives
+ * again once the air bar has refilled.
+ */
 public final class AIAgent {
     public enum State { RUNNING, SUSPENDED, SUCCEEDED, FAILED, CANCELLED }
 
@@ -35,6 +40,7 @@ public final class AIAgent {
     private State state = State.RUNNING;
     private String message = "";
     private long ticks;
+    private boolean surfacing;
 
     private String seenSpec;
     private BlockPos seenTarget;
@@ -87,6 +93,9 @@ public final class AIAgent {
 
     /** One-line description of what the agent is doing right now, for the action bar. */
     public String thought() {
+        if (surfacing) {
+            return "surfacing for air";
+        }
         String spec = bb.get(AIKeys.MINE_BLOCK);
         String clean = spec == null ? "" : spec.replace("=", "");
         BlockPos target = bb.get(AIKeys.TARGET);
@@ -175,6 +184,36 @@ public final class AIAgent {
         seenExploring = exploring;
     }
 
+    /** Number of water blocks between the player's head and the surface (0 if the head is not under water). */
+    private static int waterAbove(ClientLevel level, LocalPlayer p) {
+        BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos(p.getBlockX(), p.getBlockY() + 1, p.getBlockZ());
+        int n = 0;
+        while (n < 48 && level.getFluidState(mp).is(FluidTags.WATER)) {
+            mp.move(0, 1, 0);
+            n++;
+        }
+        return n;
+    }
+
+    /** Swims up for air before it is too late, and stays up until the air bar has refilled. */
+    private void keepAlive(LocalPlayer p, ClientLevel level) {
+        if (p.isUnderWater()) {
+            int needed = 50 + waterAbove(level, p) * 8;
+            if (p.getAirSupply() < needed) {
+                surfacing = true;
+            }
+        }
+        if (!surfacing) {
+            return;
+        }
+        if (!p.isUnderWater() && p.getAirSupply() >= p.getMaxAirSupply() - 20) {
+            surfacing = false;
+            return;
+        }
+        int a = (bb.getOrDefault(AIKeys.ACTIONS, 0) | InputOverride.JUMP) & ~InputOverride.SNEAK;
+        bb.set(AIKeys.ACTIONS, a);
+    }
+
     /** Runs one tick. Returns the terminal state if the tree finished, otherwise null. */
     State tick(Minecraft mc) {
         LocalPlayer p = mc.player;
@@ -197,6 +236,8 @@ public final class AIAgent {
             message = "internal error: " + e;
             return State.FAILED;
         }
+
+        keepAlive(p, level);
 
         if (!InputOverride.set(OWNER, bb.getOrDefault(AIKeys.ACTIONS, 0))) {
             message = "input channel busy";

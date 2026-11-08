@@ -17,7 +17,6 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.util.Mth;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
@@ -31,10 +30,10 @@ import java.util.concurrent.ThreadLocalRandom;
  * Generic block-gathering tree. The target is a block spec (see BlockSpec). It ends when either MINED reaches
  * MINE_COUNT (the "mine" command) or the inventory holds GOAL_COUNT of GOAL_ITEM (planner gather steps).
  *
- * <p>Target choice: the nearest block it can mine from a standing spot with a clear view (so logs a few blocks up a
- * trunk are chopped from the ground), otherwise a buried block reached by tunnelling. Every few ticks it also
- * grabs any matching block within arm's reach, which follows ore veins naturally. A block is only broken with a
- * clear line of sight. Unreachable targets are blacklisted; when nothing is indexed nearby it explores.
+ * <p>Target choice: the nearest block it can mine from a standing spot with a clear view, otherwise a buried block.
+ * It walks to its standing spot; if something solid is still in the way it breaks the blockers one by one (a
+ * tunnel), and for far buried targets it tunnels step by step. Every few ticks it also grabs any matching block
+ * within arm's reach, which follows ore veins. After each block it walks to the dropped item.
  */
 public final class MineTasks {
     private static final double REACH = 4.0;
@@ -42,9 +41,9 @@ public final class MineTasks {
     private static final double EYE = 1.62;
     private static final double BURY_PENALTY = 14.0;
     private static final double GRAB_RADIUS = 4.0;
-    private static final int GRAB_EVERY = 3;
-    private static final int SCAN_XZ = 20;
-    private static final int SCAN_Y = 10;
+    private static final int GRAB_EVERY = 4;
+    private static final int SCAN_XZ = 16;
+    private static final int SCAN_Y = 8;
     private static final int COLLECT_TICKS = 40;
     private static final int COLLECT_GRACE = 8;
     private static final int MAX_EXPLORES = 6;
@@ -64,10 +63,7 @@ public final class MineTasks {
                 new Sequence("Walk", false,
                         new Condition("WalkPhase", bb -> !bb.getOrDefault(AIKeys.TUNNEL, false) && !NavTasks.atGoal(bb)),
                         NavTasks.gotoTree()),
-                new Sequence("Tunnel", false,
-                        new Condition("DigPhase", bb -> bb.getOrDefault(AIKeys.BURIED, false)
-                                && (bb.getOrDefault(AIKeys.TUNNEL, false) || NavTasks.atGoal(bb))),
-                        new Task("Dig", DigTasks::digToward)),
+                new Task("Open", MineTasks::openWay),
                 new Task("DropTarget", MineTasks::dropTarget));
         Node mineOne = new Sequence("MineOne", false,
                 new Task("Grab", MineTasks::grabNearby),
@@ -159,7 +155,7 @@ public final class MineTasks {
                         continue;
                     }
                     Vec3 eye = new Vec3(x + 0.5, y + EYE, z + 0.5);
-                    if (eye.distanceTo(center) > SPOT_REACH || !clearLine(level, eye, t)) {
+                    if (eye.distanceTo(center) > SPOT_REACH || Breaker.firstBlocker(level, eye, t) != null) {
                         continue;
                     }
                     best = new BlockPos(x, y, z);
@@ -205,8 +201,7 @@ public final class MineTasks {
                 }
                 for (int dy = -ry; dy <= ry; dy++) {
                     mp.set(x, origin.getY() + dy, z);
-                    BlockState s = level.getBlockState(mp);
-                    if (!s.isAir() && BlockSpec.test(idOf(s), spec)) {
+                    if (BlockSpec.matches(level.getBlockState(mp), spec)) {
                         out.add(mp.immutable());
                     }
                 }
@@ -241,8 +236,7 @@ public final class MineTasks {
             if (bad != null && bad.contains(c.asLong())) {
                 continue;
             }
-            BlockState s = level.getBlockState(c);
-            if (s.isAir() || !BlockSpec.test(idOf(s), spec)) {
+            if (!BlockSpec.matches(level.getBlockState(c), spec)) {
                 continue;
             }
             if (view.touchesHazard(c.getX(), c.getY(), c.getZ())) {
@@ -320,21 +314,14 @@ public final class MineTasks {
         ClientLevel level = bb.get(AIKeys.LEVEL);
         AIKeys.BadSet bad = bb.get(AIKeys.BAD_TARGETS);
         Vec3 eye = p.getEyePosition();
-        List<BlockPos> nearby = WorldScanner.INSTANCE.covers(spec)
-                ? WorldScanner.INSTANCE.find(spec, p.blockPosition(), 6, 24)
-                : boxScan(level, p.blockPosition(), spec, 5, 5);
         BlockPos best = null;
         double bestD = GRAB_RADIUS * GRAB_RADIUS;
-        for (BlockPos c : nearby) {
+        for (BlockPos c : boxScan(level, p.blockPosition(), spec, 4, 4)) {
             if (bad != null && bad.contains(c.asLong())) {
                 continue;
             }
-            BlockState s = level.getBlockState(c);
-            if (s.isAir() || !BlockSpec.test(idOf(s), spec)) {
-                continue;
-            }
             double d = eye.distanceToSqr(Vec3.atCenterOf(c));
-            if (d < bestD && clearLine(level, eye, c)) {
+            if (d < bestD && Breaker.firstBlocker(level, eye, c) == null) {
                 bestD = d;
                 best = c;
             }
@@ -383,6 +370,33 @@ public final class MineTasks {
         return Status.RUNNING;
     }
 
+    /**
+     * We are at our standing spot (or already tunnelling) but still cannot mine the target. If it is within reach,
+     * break whatever is in the way (never the block under our feet); if it is far, tunnel toward it.
+     */
+    static Status openWay(Blackboard bb) {
+        BlockPos t = bb.get(AIKeys.TARGET);
+        if (t == null) {
+            return Status.RUNNING;
+        }
+        LocalPlayer p = bb.get(AIKeys.PLAYER);
+        ClientLevel level = bb.get(AIKeys.LEVEL);
+        Vec3 eye = p.getEyePosition();
+        if (eye.distanceTo(Vec3.atCenterOf(t)) <= REACH) {
+            BlockPos blocker = Breaker.firstBlocker(level, eye, t);
+            if (blocker == null) {
+                return Status.RUNNING;
+            }
+            BlockPos feet = p.blockPosition();
+            boolean underFoot = blocker.getX() == feet.getX() && blocker.getZ() == feet.getZ() && blocker.getY() < feet.getY();
+            if (!underFoot) {
+                return Breaker.step(bb, blocker) == Breaker.Result.FAILED ? Status.FAILURE : Status.RUNNING;
+            }
+        }
+        bb.set(AIKeys.TUNNEL, true);
+        return DigTasks.digToward(bb);
+    }
+
     /** The current target cannot be reached: remember that and pick another next tick. */
     static Status dropTarget(Blackboard bb) {
         BlockPos t = bb.get(AIKeys.TARGET);
@@ -408,25 +422,6 @@ public final class MineTasks {
         return Status.RUNNING;
     }
 
-    /** True if nothing solid lies between the point and the centre of the target block. */
-    static boolean clearLine(ClientLevel level, Vec3 from, BlockPos target) {
-        Vec3 to = Vec3.atCenterOf(target);
-        Vec3 d = to.subtract(from);
-        int steps = Math.max(2, (int) Math.ceil(d.length() / 0.2));
-        BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-        for (int i = 1; i < steps; i++) {
-            double f = i / (double) steps;
-            mp.set(Mth.floor(from.x + d.x * f), Mth.floor(from.y + d.y * f), Mth.floor(from.z + d.z * f));
-            if (mp.equals(target)) {
-                return true;
-            }
-            if (!level.getBlockState(mp).getCollisionShape(level, mp).isEmpty()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     /** Within reach AND with a clear view of the target; breaking blocks through other blocks is not allowed. */
     static boolean inReach(Blackboard bb) {
         BlockPos t = bb.get(AIKeys.TARGET);
@@ -436,7 +431,7 @@ public final class MineTasks {
             return false;
         }
         Vec3 eye = p.getEyePosition();
-        return eye.distanceTo(Vec3.atCenterOf(t)) <= REACH && clearLine(level, eye, t);
+        return eye.distanceTo(Vec3.atCenterOf(t)) <= REACH && Breaker.firstBlocker(level, eye, t) == null;
     }
 
     static Status breakBlock(Blackboard bb) {
@@ -447,7 +442,7 @@ public final class MineTasks {
         }
         String spec = bb.get(AIKeys.MINE_BLOCK);
         BlockState s = level.getBlockState(t);
-        if (s.isAir() || !BlockSpec.test(idOf(s), spec)) {
+        if (!BlockSpec.matches(s, spec)) {
             if (t.equals(bb.get(AIKeys.CUR_BREAK))) {
                 bb.set(AIKeys.MINED, bb.getOrDefault(AIKeys.MINED, 0) + 1);
                 bb.set(AIKeys.LAST_BROKEN, t);
@@ -482,7 +477,7 @@ public final class MineTasks {
         return best;
     }
 
-        /** Walks to the nearest dropped item for a short while so it gets picked up. */
+    /** Walks to the nearest dropped item for a short while so it gets picked up. */
     static Status collect(Blackboard bb) {
         LocalPlayer p = bb.get(AIKeys.PLAYER);
         ClientLevel level = bb.get(AIKeys.LEVEL);
@@ -512,3 +507,4 @@ public final class MineTasks {
         return Status.RUNNING;
     }
 }
+          

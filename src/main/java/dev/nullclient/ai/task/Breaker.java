@@ -2,6 +2,7 @@ package dev.nullclient.ai.task;
 
 import dev.nullclient.ai.AIKeys;
 import dev.nullclient.ai.bt.Blackboard;
+import dev.nullclient.ai.nav.WorldView;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -15,7 +16,8 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * Breaks one block per call sequence: aims, picks the fastest hotbar tool, and keeps mining until it is gone.
- * If the camera cannot be turned in time it breaks the block anyway (the game only requires reach).
+ * It never mines through another block: if something solid lies between the eyes and the requested block, that
+ * blocker is mined first, which produces a straight tunnel toward the target.
  */
 public final class Breaker {
     public enum Result { BUSY, DONE, FAILED }
@@ -29,6 +31,25 @@ public final class Breaker {
     private Breaker() {
     }
 
+    /** First solid cell strictly between {@code from} and the centre of {@code target}, or null if the way is clear. */
+    public static BlockPos firstBlocker(ClientLevel level, Vec3 from, BlockPos target) {
+        Vec3 to = Vec3.atCenterOf(target);
+        Vec3 d = to.subtract(from);
+        int steps = Math.max(2, (int) Math.ceil(d.length() / 0.1));
+        BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
+        for (int i = 1; i < steps; i++) {
+            double f = i / (double) steps;
+            mp.set(Mth.floor(from.x + d.x * f), Mth.floor(from.y + d.y * f), Mth.floor(from.z + d.z * f));
+            if (mp.equals(target)) {
+                return null;
+            }
+            if (!level.getBlockState(mp).getCollisionShape(level, mp).isEmpty()) {
+                return mp.immutable();
+            }
+        }
+        return null;
+    }
+
     public static Result step(Blackboard bb, BlockPos pos) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = bb.get(AIKeys.PLAYER);
@@ -37,17 +58,27 @@ public final class Breaker {
             bb.set(AIKeys.FAIL_REASON, "no game mode available");
             return Result.FAILED;
         }
-        BlockState s = level.getBlockState(pos);
-        if (s.getCollisionShape(level, pos).isEmpty()) {
+        if (level.getBlockState(pos).getCollisionShape(level, pos).isEmpty()) {
             return Result.DONE;
         }
-        if (s.getDestroySpeed(level, pos) < 0.0f) {
-            bb.set(AIKeys.FAIL_REASON, "unbreakable block at " + pos.toShortString());
+        Vec3 eye = p.getEyePosition();
+        BlockPos dig = pos;
+        BlockPos blocker = firstBlocker(level, eye, pos);
+        if (blocker != null) {
+            if (!new WorldView(level).clearable(blocker.getX(), blocker.getY(), blocker.getZ())) {
+                bb.set(AIKeys.FAIL_REASON, "something I will not dig is in the way at " + blocker.toShortString());
+                return Result.FAILED;
+            }
+            dig = blocker;
+        }
+        BlockState s = level.getBlockState(dig);
+        if (s.getDestroySpeed(level, dig) < 0.0f) {
+            bb.set(AIKeys.FAIL_REASON, "unbreakable block at " + dig.toShortString());
             return Result.FAILED;
         }
-        Vec3 c = Vec3.atCenterOf(pos);
-        if (p.getEyePosition().distanceTo(c) > REACH) {
-            bb.set(AIKeys.FAIL_REASON, "block out of reach at " + pos.toShortString());
+        Vec3 c = Vec3.atCenterOf(dig);
+        if (eye.distanceTo(c) > REACH) {
+            bb.set(AIKeys.FAIL_REASON, "block out of reach at " + dig.toShortString());
             return Result.FAILED;
         }
         double dx = c.x - p.getX();
@@ -58,8 +89,8 @@ public final class Breaker {
         bb.set(AIKeys.YAW, yaw);
         bb.set(AIKeys.PITCH, pitch);
 
-        if (!pos.equals(aimTarget)) {
-            aimTarget = pos;
+        if (!dig.equals(aimTarget)) {
+            aimTarget = dig;
             aimWait = 0;
         }
         boolean aimed = Math.abs(Mth.wrapDegrees(yaw - p.getYRot())) <= 12.0f && Math.abs(pitch - p.getXRot()) <= 12.0f;
@@ -69,11 +100,11 @@ public final class Breaker {
 
         selectBestTool(p, s);
         Direction face = Direction.getApproximateNearest(p.getX() - c.x, p.getEyeY() - c.y, p.getZ() - c.z);
-        if (!pos.equals(bb.get(AIKeys.CUR_BREAK))) {
-            mc.gameMode.startDestroyBlock(pos, face);
-            bb.set(AIKeys.CUR_BREAK, pos);
+        if (!dig.equals(bb.get(AIKeys.CUR_BREAK))) {
+            mc.gameMode.startDestroyBlock(dig, face);
+            bb.set(AIKeys.CUR_BREAK, dig);
         } else {
-            mc.gameMode.continueDestroyBlock(pos, face);
+            mc.gameMode.continueDestroyBlock(dig, face);
         }
         p.swing(InteractionHand.MAIN_HAND);
         return Result.BUSY;

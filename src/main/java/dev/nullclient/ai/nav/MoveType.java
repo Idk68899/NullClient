@@ -1,7 +1,7 @@
 package dev.nullclient.ai.nav;
 
 public enum MoveType {
-    START, WALK, DIAGONAL, STEP_UP, DESCEND, PARKOUR, DIG_WALK, DIG_DOWN, DIG_UP, SWIM;
+    START, WALK, DIAGONAL, STEP_UP, DESCEND, PARKOUR, DIG_WALK, DIG_DOWN, DIG_UP, SWIM, PILLAR;
 
     public boolean isFlat() {
         return this == WALK || this == DIAGONAL;

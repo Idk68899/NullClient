@@ -31,20 +31,26 @@ import java.util.concurrent.ThreadLocalRandom;
  * Generic block-gathering tree. The target is a block spec (see BlockSpec). It ends when either MINED reaches
  * MINE_COUNT (the "mine" command) or the inventory holds GOAL_COUNT of GOAL_ITEM (planner gather steps).
  *
- * <p>Exposed targets are reached by walking. Buried targets are reached by walking to the closest standable
- * spot near them and then tunnelling toward them greedily (see DigTasks). A block is only broken with a clear
- * line of sight. After each block the agent walks to the dropped item. Unreachable targets are blacklisted;
- * when nothing is indexed nearby it explores and rescans.
+ * <p>Target choice: the nearest block it can mine from a standing spot with a clear view (so logs a few blocks up a
+ * trunk are chopped from the ground), otherwise a buried block reached by tunnelling. Every few ticks it also
+ * grabs any matching block within arm's reach, which follows ore veins naturally. A block is only broken with a
+ * clear line of sight. Unreachable targets are blacklisted; when nothing is indexed nearby it explores.
  */
 public final class MineTasks {
     private static final double REACH = 4.0;
+    private static final double SPOT_REACH = 3.7;
+    private static final double EYE = 1.62;
+    private static final double BURY_PENALTY = 14.0;
+    private static final double GRAB_RADIUS = 4.0;
+    private static final int GRAB_EVERY = 3;
     private static final int SCAN_XZ = 20;
     private static final int SCAN_Y = 10;
     private static final int COLLECT_TICKS = 40;
     private static final int COLLECT_GRACE = 8;
     private static final int MAX_EXPLORES = 6;
     private static final int MAX_BAD = 12;
-    private static final int MAX_BURIED_CHECKS = 6;
+    private static final int MAX_EXPOSED_EVAL = 14;
+    private static final int MAX_BURIED_EVAL = 4;
 
     private MineTasks() {
     }
@@ -59,10 +65,12 @@ public final class MineTasks {
                         new Condition("WalkPhase", bb -> !bb.getOrDefault(AIKeys.TUNNEL, false) && !NavTasks.atGoal(bb)),
                         NavTasks.gotoTree()),
                 new Sequence("Tunnel", false,
-                        new Condition("DigPhase", bb -> bb.getOrDefault(AIKeys.TUNNEL, false) || NavTasks.atGoal(bb)),
+                        new Condition("DigPhase", bb -> bb.getOrDefault(AIKeys.BURIED, false)
+                                && (bb.getOrDefault(AIKeys.TUNNEL, false) || NavTasks.atGoal(bb))),
                         new Task("Dig", DigTasks::digToward)),
                 new Task("DropTarget", MineTasks::dropTarget));
         Node mineOne = new Sequence("MineOne", false,
+                new Task("Grab", MineTasks::grabNearby),
                 ensureTarget,
                 approach,
                 new Task("Break", MineTasks::breakBlock));
@@ -92,7 +100,7 @@ public final class MineTasks {
         return BuiltInRegistries.BLOCK.getKey(s.getBlock()).getPath();
     }
 
-    /** A safe walkable cell next to the block from which it is within reach, or null. */
+    /** A safe walkable cell next to the block from which it is within reach, or null (used for stations). */
     static BlockPos standCell(WorldView view, BlockPos t) {
         int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
         for (int[] d : dirs) {
@@ -127,6 +135,41 @@ public final class MineTasks {
         return null;
     }
 
+    /**
+     * The standing spot (walkable or floating in water) within arm's reach of the target with a clear view of it,
+     * closest to {@code from}. Looks up to 3 blocks sideways and from 4 below to 1 above the target.
+     */
+    private static BlockPos reachSpot(ClientLevel level, WorldView view, BlockPos t, BlockPos from) {
+        BlockPos best = null;
+        double bestD = Double.MAX_VALUE;
+        Vec3 center = Vec3.atCenterOf(t);
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dz = -3; dz <= 3; dz++) {
+                if (dx == 0 && dz == 0) {
+                    continue;
+                }
+                for (int y = t.getY() - 4; y <= t.getY() + 1; y++) {
+                    int x = t.getX() + dx;
+                    int z = t.getZ() + dz;
+                    double d = Math.abs(x - from.getX()) + Math.abs(z - from.getZ()) + 2.0 * Math.abs(y - from.getY());
+                    if (d >= bestD) {
+                        continue;
+                    }
+                    if (!view.canStand(x, y, z) || view.nearHazard(x, y, z)) {
+                        continue;
+                    }
+                    Vec3 eye = new Vec3(x + 0.5, y + EYE, z + 0.5);
+                    if (eye.distanceTo(center) > SPOT_REACH || !clearLine(level, eye, t)) {
+                        continue;
+                    }
+                    best = new BlockPos(x, y, z);
+                    bestD = d;
+                }
+            }
+        }
+        return best;
+    }
+
     /** The standable cell closest to a buried target, searched in a small box around it (usually the surface above). */
     private static BlockPos surfaceNear(WorldView view, BlockPos t) {
         BlockPos best = null;
@@ -150,17 +193,17 @@ public final class MineTasks {
         return best;
     }
 
-    private static List<BlockPos> boxScan(ClientLevel level, BlockPos origin, String spec) {
+    private static List<BlockPos> boxScan(ClientLevel level, BlockPos origin, String spec, int rxz, int ry) {
         List<BlockPos> out = new ArrayList<>();
         BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-        for (int dx = -SCAN_XZ; dx <= SCAN_XZ; dx++) {
-            for (int dz = -SCAN_XZ; dz <= SCAN_XZ; dz++) {
+        for (int dx = -rxz; dx <= rxz; dx++) {
+            for (int dz = -rxz; dz <= rxz; dz++) {
                 int x = origin.getX() + dx;
                 int z = origin.getZ() + dz;
                 if (!level.hasChunk(x >> 4, z >> 4)) {
                     continue;
                 }
-                for (int dy = -SCAN_Y; dy <= SCAN_Y; dy++) {
+                for (int dy = -ry; dy <= ry; dy++) {
                     mp.set(x, origin.getY() + dy, z);
                     BlockState s = level.getBlockState(mp);
                     if (!s.isAir() && BlockSpec.test(idOf(s), spec)) {
@@ -176,6 +219,7 @@ public final class MineTasks {
     static Status findBlock(Blackboard bb) {
         bb.set(AIKeys.ALLOW_DIG, null);
         bb.set(AIKeys.TUNNEL, null);
+        bb.set(AIKeys.BURIED, null);
         bb.set(AIKeys.DIG_STEPS, null);
         LocalPlayer p = bb.get(AIKeys.PLAYER);
         ClientLevel level = bb.get(AIKeys.LEVEL);
@@ -184,16 +228,15 @@ public final class MineTasks {
         WorldView view = new WorldView(level);
         AIKeys.BadSet bad = bb.get(AIKeys.BAD_TARGETS);
         List<BlockPos> candidates = WorldScanner.INSTANCE.covers(spec)
-                ? WorldScanner.INSTANCE.find(spec, origin, 96, 64)
-                : boxScan(level, origin, spec);
+                ? WorldScanner.INSTANCE.find(spec, origin, 96, 80)
+                : boxScan(level, origin, spec, SCAN_XZ, SCAN_Y);
 
-        BlockPos exposed = null;
-        BlockPos exposedStand = null;
-        double exposedD = Double.MAX_VALUE;
-        BlockPos buried = null;
-        BlockPos buriedStand = null;
-        double buriedD = Double.MAX_VALUE;
-        int buriedChecked = 0;
+        BlockPos bestT = null;
+        BlockPos bestG = null;
+        boolean bestBuried = false;
+        double bestScore = Double.MAX_VALUE;
+        int exposedEval = 0;
+        int buriedEval = 0;
         for (BlockPos c : candidates) {
             if (bad != null && bad.contains(c.asLong())) {
                 continue;
@@ -202,40 +245,40 @@ public final class MineTasks {
             if (s.isAir() || !BlockSpec.test(idOf(s), spec)) {
                 continue;
             }
-            if (!view.clearable(c.getX(), c.getY(), c.getZ())) {
+            if (view.touchesHazard(c.getX(), c.getY(), c.getZ())) {
                 continue;
             }
-            double d = Math.sqrt(c.distSqr(origin));
-            BlockPos walk = standCell(view, c);
-            if (walk != null) {
-                if (d < exposedD) {
-                    exposedD = d;
-                    exposed = c;
-                    exposedStand = walk;
+            double base = Math.sqrt(c.distSqr(origin)) + 2.0 * Math.abs(c.getY() - origin.getY());
+            if (base >= bestScore) {
+                continue;
+            }
+            if (exposedEval < MAX_EXPOSED_EVAL) {
+                exposedEval++;
+                BlockPos spot = reachSpot(level, view, c, origin);
+                if (spot != null) {
+                    bestScore = base;
+                    bestT = c;
+                    bestG = spot;
+                    bestBuried = false;
+                    continue;
                 }
-            } else if (d < buriedD && buriedChecked < MAX_BURIED_CHECKS) {
-                buriedChecked++;
+            }
+            if (buriedEval < MAX_BURIED_EVAL && base + BURY_PENALTY < bestScore) {
+                buriedEval++;
                 BlockPos surface = surfaceNear(view, c);
                 if (surface != null) {
-                    buriedD = d;
-                    buried = c;
-                    buriedStand = surface;
+                    bestScore = base + BURY_PENALTY;
+                    bestT = c;
+                    bestG = surface;
+                    bestBuried = true;
                 }
             }
         }
 
-        BlockPos target = null;
-        BlockPos goal = null;
-        if (exposed != null && (buried == null || exposedD <= buriedD * 2.0 + 20.0)) {
-            target = exposed;
-            goal = exposedStand;
-        } else if (buried != null) {
-            target = buried;
-            goal = buriedStand;
-        }
-        if (target != null) {
-            bb.set(AIKeys.TARGET, target);
-            bb.set(AIKeys.GOAL, goal);
+        if (bestT != null) {
+            bb.set(AIKeys.TARGET, bestT);
+            bb.set(AIKeys.GOAL, bestG);
+            bb.set(AIKeys.BURIED, bestBuried ? Boolean.TRUE : null);
             NavTasks.resetNav(bb);
             return Status.SUCCESS;
         }
@@ -256,6 +299,56 @@ public final class MineTasks {
         bb.set(AIKeys.EXPLORING, true);
         NavTasks.resetNav(bb);
         return Status.RUNNING;
+    }
+
+    /**
+     * Every few ticks: if a matching block is within arm's reach with a clear view and the current target is not,
+     * switch to it. After breaking one ore the rest of the vein is right there, so this mines whole veins.
+     */
+    static Status grabNearby(Blackboard bb) {
+        int tick = bb.getOrDefault(AIKeys.GRAB_TICK, 0) + 1;
+        bb.set(AIKeys.GRAB_TICK, tick);
+        if (tick % GRAB_EVERY != 0) {
+            return Status.SUCCESS;
+        }
+        BlockPos cur = bb.get(AIKeys.TARGET);
+        if (cur != null && inReach(bb)) {
+            return Status.SUCCESS;
+        }
+        String spec = bb.get(AIKeys.MINE_BLOCK);
+        LocalPlayer p = bb.get(AIKeys.PLAYER);
+        ClientLevel level = bb.get(AIKeys.LEVEL);
+        AIKeys.BadSet bad = bb.get(AIKeys.BAD_TARGETS);
+        Vec3 eye = p.getEyePosition();
+        List<BlockPos> nearby = WorldScanner.INSTANCE.covers(spec)
+                ? WorldScanner.INSTANCE.find(spec, p.blockPosition(), 6, 24)
+                : boxScan(level, p.blockPosition(), spec, 5, 5);
+        BlockPos best = null;
+        double bestD = GRAB_RADIUS * GRAB_RADIUS;
+        for (BlockPos c : nearby) {
+            if (bad != null && bad.contains(c.asLong())) {
+                continue;
+            }
+            BlockState s = level.getBlockState(c);
+            if (s.isAir() || !BlockSpec.test(idOf(s), spec)) {
+                continue;
+            }
+            double d = eye.distanceToSqr(Vec3.atCenterOf(c));
+            if (d < bestD && clearLine(level, eye, c)) {
+                bestD = d;
+                best = c;
+            }
+        }
+        if (best != null && !best.equals(cur) && !new WorldView(level).touchesHazard(best.getX(), best.getY(), best.getZ())) {
+            Breaker.abort(bb);
+            bb.set(AIKeys.TARGET, best);
+            bb.set(AIKeys.GOAL, null);
+            bb.set(AIKeys.BURIED, null);
+            bb.set(AIKeys.TUNNEL, null);
+            bb.set(AIKeys.DIG_STEPS, null);
+            NavTasks.resetNav(bb);
+        }
+        return Status.SUCCESS;
     }
 
     private static BlockPos pickExploreGoal(ClientLevel level, LocalPlayer p) {
@@ -308,6 +401,7 @@ public final class MineTasks {
         Breaker.abort(bb);
         bb.set(AIKeys.TARGET, null);
         bb.set(AIKeys.TUNNEL, null);
+        bb.set(AIKeys.BURIED, null);
         bb.set(AIKeys.DIG_STEPS, null);
         bb.set(AIKeys.FAIL_REASON, null);
         NavTasks.resetNav(bb);
@@ -362,11 +456,11 @@ public final class MineTasks {
             bb.set(AIKeys.CUR_BREAK, null);
             bb.set(AIKeys.TARGET, null);
             bb.set(AIKeys.TUNNEL, null);
+            bb.set(AIKeys.BURIED, null);
             bb.set(AIKeys.DIG_STEPS, null);
             return Status.RUNNING;
         }
         if (!inReach(bb)) {
-            // Not in reach yet: the approach step (walk or tunnel) handles it on the next tick.
             return Status.RUNNING;
         }
         return Breaker.step(bb, t) == Breaker.Result.FAILED ? Status.FAILURE : Status.RUNNING;
@@ -388,7 +482,7 @@ public final class MineTasks {
         return best;
     }
 
-    /** Walks to the nearest dropped item for a short while so it gets picked up. */
+        /** Walks to the nearest dropped item for a short while so it gets picked up. */
     static Status collect(Blackboard bb) {
         LocalPlayer p = bb.get(AIKeys.PLAYER);
         ClientLevel level = bb.get(AIKeys.LEVEL);

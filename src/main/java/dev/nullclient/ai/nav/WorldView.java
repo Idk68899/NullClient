@@ -13,7 +13,11 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.util.Set;
 
-/** Cached, classified view of the client level for pathfinding. Create a new instance per search. */
+/**
+ * Cached, classified view of the client level for pathfinding. Create a new instance per search.
+ * Cells in the optional {@code blocked} set (positions where earlier routes failed) are treated as solid walls
+ * that cannot be stood in, passed or dug.
+ */
 public final class WorldView {
     private static final int PASSABLE = 1;
     private static final int SOLID_TOP = 2;
@@ -35,11 +39,17 @@ public final class WorldView {
             Blocks.END_PORTAL_FRAME);
 
     private final ClientLevel level;
+    private final Set<Long> blocked;
     private final BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
     private final Long2IntOpenHashMap cache = new Long2IntOpenHashMap();
 
     public WorldView(ClientLevel level) {
+        this(level, null);
+    }
+
+    public WorldView(ClientLevel level, Set<Long> blocked) {
         this.level = level;
+        this.blocked = blocked;
         this.cache.defaultReturnValue(-1);
     }
 
@@ -47,7 +57,7 @@ public final class WorldView {
         long k = BlockPos.asLong(x, y, z);
         int v = cache.get(k);
         if (v == -1) {
-            v = compute(x, y, z);
+            v = blocked != null && blocked.contains(k) ? 0 : compute(x, y, z);
             cache.put(k, v);
         }
         return v;

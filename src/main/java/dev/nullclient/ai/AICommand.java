@@ -63,9 +63,10 @@ public final class AICommand {
     @Subscribe
     public void onTaskState(Events.AITaskState e) {
         String who = e.agent().profile().name + ": ";
+        RunLog.add(who + e.kind() + " " + e.agent().label() + (e.message().isEmpty() ? "" : " - " + e.message()));
         switch (e.kind()) {
             case SUCCEEDED -> reply(who + "done - " + e.agent().label(), ChatFormatting.GREEN);
-            case FAILED -> reply(who + "FAILED - " + e.message(), ChatFormatting.RED);
+            case FAILED -> reply(who + "FAILED - " + e.message() + "  (.ai why for details)", ChatFormatting.RED);
             case CANCELLED -> reply(who + "cancelled", ChatFormatting.YELLOW);
             default -> {
             }
@@ -81,13 +82,24 @@ public final class AICommand {
         if (t.length == 1 || t[1].equalsIgnoreCase("help")) {
             reply("just say what you want: .ai get me a diamond pickaxe", ChatFormatting.GRAY);
             reply("also: goto x y z | mine <block> [n] | wander | follow <player> | stop", ChatFormatting.GRAY);
-            reply(".ai menu | talk | new <name> | profiles | list | stopall | debug", ChatFormatting.GRAY);
+            reply(".ai why | menu | talk | new <name> | profiles | list | stopall | debug", ChatFormatting.GRAY);
             return;
         }
         String first = t[1].toLowerCase(Locale.ROOT);
         switch (first) {
             case "debug" -> {
                 debug();
+                return;
+            }
+            case "why" -> {
+                List<String> lines = RunLog.recent(10);
+                if (lines.isEmpty()) {
+                    reply("nothing logged yet - run a task first", ChatFormatting.GRAY);
+                }
+                for (String l : lines) {
+                    reply(l, ChatFormatting.GRAY);
+                }
+                reply("full log: config/nullclient/ai.log", ChatFormatting.DARK_GRAY);
                 return;
             }
             case "talk" -> {
@@ -328,7 +340,7 @@ public final class AICommand {
         if (p != null) {
             BlockPos o = p.blockPosition();
             WorldScanner s = WorldScanner.INSTANCE;
-            reply("scanner (96 blocks): logs " + s.find("log", o, 96, 5000).size()
+            reply("scanner (96 blocks, " + (s.settled() ? "scan complete" : "still scanning") + "): logs " + s.find("log", o, 96, 5000).size()
                     + ", coal " + s.find("coal_ore", o, 96, 5000).size()
                     + ", iron " + s.find("iron_ore", o, 96, 5000).size()
                     + ", diamond " + s.find("diamond_ore", o, 96, 5000).size(), ChatFormatting.GRAY);

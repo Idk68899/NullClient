@@ -1,6 +1,7 @@
 package dev.nullclient.ai.task;
 
 import dev.nullclient.ai.AIKeys;
+import dev.nullclient.ai.RunLog;
 import dev.nullclient.ai.bt.Blackboard;
 import dev.nullclient.ai.bt.Condition;
 import dev.nullclient.ai.bt.Node;
@@ -12,6 +13,7 @@ import dev.nullclient.ai.bt.Task;
 import dev.nullclient.ai.nav.AStarPathfinder;
 import dev.nullclient.ai.nav.Path;
 import dev.nullclient.ai.nav.PathFollower;
+import dev.nullclient.ai.nav.PathNode;
 import dev.nullclient.ai.nav.WorldView;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.AbstractClientPlayer;
@@ -23,6 +25,7 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * Leaf implementations and tree builders for navigation tasks. Route planning first tries plain walking; if
  * there is no walking route (and it is not exploring), it retries once allowing tunnelling and pillaring.
+ * Cells where a route failed are remembered and avoided by the next plan.
  */
 public final class NavTasks {
     private static final int MAX_REPLANS = 12;
@@ -30,6 +33,7 @@ public final class NavTasks {
     private static final int SEARCH_CHUNK = 40;
     private static final int MAX_EXPANSIONS = 15_000;
     private static final int MAX_EXPANSIONS_DIG = 8_000;
+    private static final int MAX_AVOID = 40;
 
     private NavTasks() {
     }
@@ -55,6 +59,7 @@ public final class NavTasks {
                     if (bb.get(AIKeys.FAIL_REASON) == null) {
                         bb.set(AIKeys.FAIL_REASON, "navigation failed after " + MAX_REPLANS + " replans");
                     }
+                    RunLog.add("gave up navigating after " + MAX_REPLANS + " replans");
                     return Status.FAILURE;
                 }));
     }
@@ -121,7 +126,7 @@ public final class NavTasks {
             }
             boolean dig = bb.getOrDefault(AIKeys.ALLOW_DIG, false);
             boolean pillar = dig && Placer.count(p) > 0;
-            search = new AStarPathfinder.Search(new WorldView(level), p.blockPosition(), goal,
+            search = new AStarPathfinder.Search(new WorldView(level, bb.get(AIKeys.AVOID)), p.blockPosition(), goal,
                     dig ? MAX_EXPANSIONS_DIG : MAX_EXPANSIONS, dig, pillar);
             bb.set(AIKeys.SEARCH, search);
         }
@@ -144,12 +149,29 @@ public final class NavTasks {
                 bb.set(AIKeys.SEARCH, null);
                 if (!bb.getOrDefault(AIKeys.ALLOW_DIG, false) && !bb.getOrDefault(AIKeys.EXPLORING, false)) {
                     bb.set(AIKeys.ALLOW_DIG, true);
+                    RunLog.add("no walking route to " + goal.toShortString() + " from " + p.blockPosition().toShortString()
+                            + " - allowing tunnels and pillars");
                     return Status.RUNNING;
                 }
+                RunLog.add("no route at all to " + goal.toShortString() + " from " + p.blockPosition().toShortString());
                 bb.set(AIKeys.FAIL_REASON, "no path to " + goal.toShortString());
                 bb.set(AIKeys.REPLANS, MAX_REPLANS);
                 return Status.FAILURE;
         }
+    }
+
+    /** Remembers the cell a failed route was heading for so the next plan avoids it. */
+    private static void recordAvoid(Blackboard bb, PathFollower f) {
+        PathNode n = f.currentNode();
+        if (n.move.isDig()) {
+            return;
+        }
+        AIKeys.BadSet avoid = bb.get(AIKeys.AVOID);
+        if (avoid == null || avoid.size() > MAX_AVOID) {
+            avoid = new AIKeys.BadSet();
+            bb.set(AIKeys.AVOID, avoid);
+        }
+        avoid.add(BlockPos.asLong(n.x, n.y, n.z));
     }
 
     static Status followPath(Blackboard bb) {
@@ -172,9 +194,13 @@ public final class NavTasks {
                 }
                 return Status.RUNNING;
             default:
+                int replans = follower.consumed() >= 8 ? 0 : bb.getOrDefault(AIKeys.REPLANS, 0) + 1;
+                RunLog.add("route failed at step " + follower.index() + "/" + (follower.path().size() - 1) + ": "
+                        + follower.failure() + " (replan " + replans + ")");
+                recordAvoid(bb, follower);
                 bb.set(AIKeys.PATH, null);
                 bb.set(AIKeys.FOLLOWER, null);
-                bb.set(AIKeys.REPLANS, follower.consumed() >= 8 ? 0 : bb.getOrDefault(AIKeys.REPLANS, 0) + 1);
+                bb.set(AIKeys.REPLANS, replans);
                 return Status.FAILURE;
         }
     }
@@ -185,6 +211,7 @@ public final class NavTasks {
         bb.set(AIKeys.FOLLOWER, null);
         bb.set(AIKeys.REPLANS, 0);
         bb.set(AIKeys.ALLOW_DIG, null);
+        bb.set(AIKeys.AVOID, null);
     }
 
     // ------------------------------------------------------------------ wander leaves

@@ -23,8 +23,7 @@ import java.util.List;
 
 /**
  * A behavior tree bound to one local profile. Drives the local player while that profile is active.
- * Also keeps the player alive in water: when air runs low for the swim back up, it surfaces and only dives
- * again once the air bar has refilled.
+ * The camera eases toward its target angle instead of snapping, and in water the agent surfaces for air in time.
  */
 public final class AIAgent {
     public enum State { RUNNING, SUSPENDED, SUCCEEDED, FAILED, CANCELLED }
@@ -32,6 +31,10 @@ public final class AIAgent {
     public static final String OWNER = "ai";
     private static final int SCAN_RADIUS = 96;
     private static final int ROUTE_REPEAT_TICKS = 200;
+    private static final float YAW_EASE = 0.35f;
+    private static final float YAW_MAX = 22.0f;
+    private static final float PITCH_EASE = 0.35f;
+    private static final float PITCH_MAX = 12.0f;
 
     private final Profile profile;
     private final String label;
@@ -117,7 +120,7 @@ public final class AIAgent {
             return "mining " + clean + " at " + target.toShortString();
         }
         if (spec != null) {
-            return "scanning for " + clean;
+            return WorldScanner.INSTANCE.settled() ? "looking for " + clean : "scanning the area for " + clean;
         }
         return label;
     }
@@ -214,6 +217,14 @@ public final class AIAgent {
         bb.set(AIKeys.ACTIONS, a);
     }
 
+    /** Eases an angle toward a target: proportional step, capped, snapping when very close. */
+    private static float ease(float current, float diff, float factor, float max) {
+        if (Math.abs(diff) < 1.0f) {
+            return current + diff;
+        }
+        return current + Mth.clamp(diff * factor, -max, max);
+    }
+
     /** Runs one tick. Returns the terminal state if the tree finished, otherwise null. */
     State tick(Minecraft mc) {
         LocalPlayer p = mc.player;
@@ -234,6 +245,7 @@ public final class AIAgent {
             s = root.tick(bb);
         } catch (RuntimeException e) {
             message = "internal error: " + e;
+            RunLog.add("internal error: " + e);
             return State.FAILED;
         }
 
@@ -246,12 +258,12 @@ public final class AIAgent {
         Float yaw = bb.get(AIKeys.YAW);
         if (yaw != null) {
             float cur = p.getYRot();
-            p.setYRot(cur + Mth.clamp(Mth.wrapDegrees(yaw - cur), -40.0f, 40.0f));
+            p.setYRot(ease(cur, Mth.wrapDegrees(yaw - cur), YAW_EASE, YAW_MAX));
         }
         Float pitch = bb.get(AIKeys.PITCH);
         if (pitch != null) {
             float cur = p.getXRot();
-            p.setXRot(Mth.clamp(cur + Mth.clamp(pitch - cur, -20.0f, 20.0f), -90.0f, 90.0f));
+            p.setXRot(Mth.clamp(ease(cur, pitch - cur, PITCH_EASE, PITCH_MAX), -90.0f, 90.0f));
         }
 
         if (Say.verbose) {

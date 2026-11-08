@@ -15,10 +15,9 @@ import java.util.List;
 
 /**
  * Walks a {@link Path} by emitting movement actions and a target view angle into the blackboard.
- * Handles sprinting, step-ups, descents, swimming, parkour take-off and tunnelling: before a dig move it
- * breaks the blocks in the way, one at a time. It waits briefly to turn toward the next node but never forever,
- * so a camera that cannot be turned does not freeze the agent. Reports failure when stuck, off-route, or when
- * upcoming nodes are no longer safe.
+ * Handles sprinting, step-ups, descents, swimming (rising and sinking toward the next node), parkour take-off
+ * and tunnelling. It waits briefly to turn toward the next node but never forever. Reports failure when stuck,
+ * off-route, or when upcoming nodes are no longer safe.
  */
 public final class PathFollower {
     public enum Result { RUNNING, DONE, FAILED }
@@ -182,15 +181,28 @@ public final class PathFollower {
                     actions |= InputOverride.JUMP;
                 }
             }
+            case SWIM -> {
+                if (hd < 0.3) {
+                    actions = 0;
+                }
+            }
             default -> {
             }
         }
-        if (p.isInWater() || p.isInLava()) {
+
+        // Water: rise or sink toward the next node's height instead of always floating up.
+        if (p.isInLava()) {
             actions |= InputOverride.JUMP;
+        } else if (p.isInWater()) {
+            double dyTarget = t.y - pos.y;
+            if (dyTarget > 0.3) {
+                actions |= InputOverride.JUMP;
+            } else if (dyTarget < -0.3) {
+                actions = (actions & ~InputOverride.JUMP) | InputOverride.SNEAK;
+            }
         }
 
-        // Wait a moment to turn toward the next node, but never forever: if the camera will not turn,
-        // keep going so the movement driver can detect the stall and switch to direct movement.
+        // Wait a moment to turn toward the next node, but never forever.
         float diff = Mth.wrapDegrees(yaw - p.getYRot());
         if (grounded && Math.abs(diff) > 50.0f && !InputOverride.velocityMode()) {
             if (turnWait < TURN_PATIENCE) {

@@ -191,6 +191,8 @@ public final class InputOverride {
             } else if (p.isInWater() || p.isInLava()) {
                 vy = 0.1;
             }
+        } else if (has(a, SNEAK) && p.isInWater()) {
+            vy = -0.12;
         }
         p.setDeltaMovement(dx, vy, dz);
     }

@@ -20,11 +20,14 @@ import net.minecraft.core.BlockPos;
 
 import java.util.concurrent.ThreadLocalRandom;
 
-/** Leaf implementations and tree builders for navigation tasks. */
+/**
+ * Leaf implementations and tree builders for navigation tasks. Route planning first tries plain walking; if
+ * there is no walking route (and it is not exploring), it retries once allowing tunnelling and pillaring.
+ */
 public final class NavTasks {
     private static final int MAX_REPLANS = 12;
-    private static final long SEARCH_NANOS = 10_000_000L;
-    private static final int SEARCH_CHUNK = 50;
+    private static final long SEARCH_NANOS = 6_000_000L;
+    private static final int SEARCH_CHUNK = 40;
     private static final int MAX_EXPANSIONS = 15_000;
     private static final int MAX_EXPANSIONS_DIG = 8_000;
 
@@ -33,7 +36,7 @@ public final class NavTasks {
 
     // ------------------------------------------------------------------ trees
 
-    /** Reactive goto tree: arrive > follow current path > (re)plan > abort. Digs only if ALLOW_DIG is set. */
+    /** Reactive goto tree: arrive > follow current path > (re)plan > abort. */
     public static Node gotoTree() {
         return new Selector("Goto", false,
                 new Sequence("Arrived", false,
@@ -117,8 +120,9 @@ public final class NavTasks {
                 return Status.RUNNING;
             }
             boolean dig = bb.getOrDefault(AIKeys.ALLOW_DIG, false);
+            boolean pillar = dig && Placer.count(p) > 0;
             search = new AStarPathfinder.Search(new WorldView(level), p.blockPosition(), goal,
-                    dig ? MAX_EXPANSIONS_DIG : MAX_EXPANSIONS, dig);
+                    dig ? MAX_EXPANSIONS_DIG : MAX_EXPANSIONS, dig, pillar);
             bb.set(AIKeys.SEARCH, search);
         }
         long end = System.nanoTime() + SEARCH_NANOS;
@@ -138,6 +142,10 @@ public final class NavTasks {
                 return Status.SUCCESS;
             default:
                 bb.set(AIKeys.SEARCH, null);
+                if (!bb.getOrDefault(AIKeys.ALLOW_DIG, false) && !bb.getOrDefault(AIKeys.EXPLORING, false)) {
+                    bb.set(AIKeys.ALLOW_DIG, true);
+                    return Status.RUNNING;
+                }
                 bb.set(AIKeys.FAIL_REASON, "no path to " + goal.toShortString());
                 bb.set(AIKeys.REPLANS, MAX_REPLANS);
                 return Status.FAILURE;
@@ -176,6 +184,7 @@ public final class NavTasks {
         bb.set(AIKeys.SEARCH, null);
         bb.set(AIKeys.FOLLOWER, null);
         bb.set(AIKeys.REPLANS, 0);
+        bb.set(AIKeys.ALLOW_DIG, null);
     }
 
     // ------------------------------------------------------------------ wander leaves

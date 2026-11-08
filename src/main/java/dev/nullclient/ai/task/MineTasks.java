@@ -1,6 +1,7 @@
 package dev.nullclient.ai.task;
 
 import dev.nullclient.ai.AIKeys;
+import dev.nullclient.ai.RunLog;
 import dev.nullclient.ai.bt.Blackboard;
 import dev.nullclient.ai.bt.Condition;
 import dev.nullclient.ai.bt.Node;
@@ -30,10 +31,10 @@ import java.util.concurrent.ThreadLocalRandom;
  * Generic block-gathering tree. The target is a block spec (see BlockSpec). It ends when either MINED reaches
  * MINE_COUNT (the "mine" command) or the inventory holds GOAL_COUNT of GOAL_ITEM (planner gather steps).
  *
- * <p>Target choice: the nearest block it can mine from a standing spot with a clear view, otherwise a buried block.
- * It walks to its standing spot; if something solid is still in the way it breaks the blockers one by one (a
- * tunnel), and for far buried targets it tunnels step by step. Every few ticks it also grabs any matching block
- * within arm's reach, which follows ore veins. After each block it walks to the dropped item.
+ * <p>Finding blocks: uncommon blocks are looked up in the world index (it starts indexing them on first request
+ * and waits for the first full scan); very common blocks (dirt, stone, sand) are found by scanning around the player,
+ * out to 32 blocks if nothing is closer. The nearest block it can mine from a standing spot with a clear view wins;
+ * buried blocks are reached by tunnelling. Every few ticks it also grabs any matching block within arm's reach.
  */
 public final class MineTasks {
     private static final double REACH = 4.0;
@@ -44,6 +45,9 @@ public final class MineTasks {
     private static final int GRAB_EVERY = 4;
     private static final int SCAN_XZ = 16;
     private static final int SCAN_Y = 8;
+    private static final int BIG_XZ = 32;
+    private static final int BIG_Y = 12;
+    private static final int SCAN_WAIT_TICKS = 400;
     private static final int COLLECT_TICKS = 40;
     private static final int COLLECT_GRACE = 8;
     private static final int MAX_EXPLORES = 6;
@@ -220,11 +224,25 @@ public final class MineTasks {
         ClientLevel level = bb.get(AIKeys.LEVEL);
         String spec = bb.get(AIKeys.MINE_BLOCK);
         BlockPos origin = p.blockPosition();
+
+        boolean indexed = WorldScanner.INSTANCE.ensureIndexed(spec);
+        if (indexed && !WorldScanner.INSTANCE.settled()) {
+            int waited = bb.getOrDefault(AIKeys.SCAN_WAIT, 0) + 1;
+            bb.set(AIKeys.SCAN_WAIT, waited);
+            if (waited < SCAN_WAIT_TICKS) {
+                return Status.RUNNING;
+            }
+        }
+        bb.set(AIKeys.SCAN_WAIT, null);
+
         WorldView view = new WorldView(level);
         AIKeys.BadSet bad = bb.get(AIKeys.BAD_TARGETS);
-        List<BlockPos> candidates = WorldScanner.INSTANCE.covers(spec)
+        List<BlockPos> candidates = indexed
                 ? WorldScanner.INSTANCE.find(spec, origin, 96, 80)
                 : boxScan(level, origin, spec, SCAN_XZ, SCAN_Y);
+        if (candidates.isEmpty() && !indexed) {
+            candidates = boxScan(level, origin, spec, BIG_XZ, BIG_Y);
+        }
 
         BlockPos bestT = null;
         BlockPos bestG = null;
@@ -280,14 +298,18 @@ public final class MineTasks {
         String shown = spec.replace("=", "");
         int tries = bb.getOrDefault(AIKeys.EXPLORE_TRIES, 0);
         if (tries >= MAX_EXPLORES) {
+            RunLog.add("no reachable " + shown + " found after " + MAX_EXPLORES + " explorations, from " + origin.toShortString());
             bb.set(AIKeys.FAIL_REASON, "no reachable " + shown + " found after exploring");
             return Status.FAILURE;
         }
         BlockPos explore = pickExploreGoal(level, p);
         if (explore == null) {
+            RunLog.add("no " + shown + " nearby and nowhere to explore from " + origin.toShortString());
             bb.set(AIKeys.FAIL_REASON, "no " + shown + " nearby and nowhere to explore");
             return Status.FAILURE;
         }
+        RunLog.add("no " + shown + " reachable from " + origin.toShortString() + " - exploring to " + explore.toShortString()
+                + " (try " + (tries + 1) + ")");
         bb.set(AIKeys.EXPLORE_TRIES, tries + 1);
         bb.set(AIKeys.GOAL, explore);
         bb.set(AIKeys.EXPLORING, true);
@@ -407,6 +429,7 @@ public final class MineTasks {
         }
         if (t != null) {
             bad.add(t.asLong());
+            RunLog.add("gave up on target at " + t.toShortString() + " (could not reach it), " + bad.size() + " given up so far");
         }
         if (bad.size() > MAX_BAD) {
             bb.set(AIKeys.FAIL_REASON, "gave up: too many unreachable targets");
@@ -507,4 +530,3 @@ public final class MineTasks {
         return Status.RUNNING;
     }
 }
-          

@@ -107,7 +107,7 @@ public final class WorldView {
         return (flags(x, y, z) & SOLID_TOP) != 0;
     }
 
-    /** A two-block-tall player can stand with feet in this cell. */
+    /** A two-block-tall player can stand (or float, in water) with feet in this cell. */
     public boolean canStand(int x, int y, int z) {
         if (!bodyFree(x, y, z) || !bodyFree(x, y + 1, z)) {
             return false;
@@ -125,6 +125,14 @@ public final class WorldView {
             }
         }
         return false;
+    }
+
+    /** True if the cell itself or any of its six neighbours is lava, fire or another hazard. Water does not count. */
+    public boolean touchesHazard(int x, int y, int z) {
+        return (flags(x, y, z) & HAZARD) != 0
+                || (flags(x + 1, y, z) & HAZARD) != 0 || (flags(x - 1, y, z) & HAZARD) != 0
+                || (flags(x, y + 1, z) & HAZARD) != 0 || (flags(x, y - 1, z) & HAZARD) != 0
+                || (flags(x, y, z + 1) & HAZARD) != 0 || (flags(x, y, z - 1) & HAZARD) != 0;
     }
 
     /** No fluid or hazard touches any face of this cell, so opening it cannot flood or burn the tunnel. */

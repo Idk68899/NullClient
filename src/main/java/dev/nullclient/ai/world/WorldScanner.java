@@ -23,8 +23,12 @@ import java.util.Set;
 
 /**
  * Incremental block index. Each tick it rescans 16x16x16 sections around the player within a small time
- * budget (skipping sections whose palette holds nothing of interest), nearest first, and remembers where the
- * interesting blocks are. After a full pass it idles for a while before rescanning.
+ * budget (skipping sections whose palette holds nothing of interest), nearest first.
+ *
+ * <p>It learns new block types on demand ({@link #ensureIndexed}), except very common blocks (dirt, stone, sand...)
+ * which would swamp the index; callers look for those directly around the player. The area around the player
+ * is also refreshed every half second so freshly placed or broken blocks (a crafting table the AI just placed)
+ * are found immediately.
  */
 public final class WorldScanner {
     public static final WorldScanner INSTANCE = new WorldScanner();
@@ -32,6 +36,14 @@ public final class WorldScanner {
     private static final int RADIUS_CHUNKS = 6;
     private static final long BUDGET_NANOS = 2_000_000L;
     private static final int IDLE_TICKS = 200;
+    private static final int REFRESH_EVERY_TICKS = 10;
+
+    private static final Set<String> COMMON = Set.of(
+            "stone", "dirt", "grass_block", "coarse_dirt", "podzol", "mycelium", "sand", "red_sand", "gravel", "clay",
+            "mud", "snow", "snow_block", "ice", "packed_ice", "deepslate", "cobbled_deepslate", "tuff", "andesite",
+            "diorite", "granite", "calcite", "dripstone_block", "netherrack", "basalt", "blackstone", "end_stone",
+            "sandstone", "red_sandstone", "terracotta", "water", "lava", "bedrock", "moss_block", "short_grass",
+            "tall_grass", "fern", "large_fern", "cobblestone");
 
     private final Map<Long, Map<String, LongArrayList>> sections = new HashMap<>();
     private final Map<Block, String> interest = new HashMap<>();
@@ -39,10 +51,16 @@ public final class WorldScanner {
     private final List<int[]> queue = new ArrayList<>();
     private int cursor;
     private int idle;
+    private boolean fullPass;
+    private long lastRefreshTick = Long.MIN_VALUE;
     private long lastCenter = Long.MIN_VALUE;
     private ClientLevel level;
 
     private WorldScanner() {
+    }
+
+    private static boolean common(String id) {
+        return COMMON.contains(id) || id.endsWith("_leaves") || id.endsWith("_terracotta") || id.endsWith("_concrete_powder");
     }
 
     public void setInterest(Set<String> ids) {
@@ -56,13 +74,56 @@ public final class WorldScanner {
             }
         }
         sections.clear();
+        fullPass = false;
     }
 
-    /** True if every part of the spec names a block id this scanner indexes. */
+    /**
+     * Starts indexing every uncommon block the spec matches. Returns true if all blocks the spec matches are
+     * indexed (so {@link #find} can be trusted once {@link #settled()} is true); false if some are too common to
+     * index, in which case the caller should scan around the player instead.
+     */
+    public boolean ensureIndexed(String spec) {
+        Set<Block> wanted = BlockSpec.blocks(spec);
+        if (wanted.isEmpty()) {
+            return false;
+        }
+        boolean changed = false;
+        boolean all = true;
+        for (Block b : wanted) {
+            if (interest.containsKey(b)) {
+                continue;
+            }
+            String id = BuiltInRegistries.BLOCK.getKey(b).getPath();
+            if (common(id)) {
+                all = false;
+                continue;
+            }
+            interest.put(b, id);
+            interestIds.add(id);
+            changed = true;
+        }
+        if (changed) {
+            sections.clear();
+            lastCenter = Long.MIN_VALUE;
+            idle = 0;
+            fullPass = false;
+        }
+        return all;
+    }
+
+    /** True once a complete scan has finished since the set of indexed blocks last changed. */
+    public boolean settled() {
+        return fullPass;
+    }
+
+    /** True if every block the spec matches is indexed. */
     public boolean covers(String spec) {
-        for (String part : spec.split(",")) {
-            String id = part.startsWith("=") ? part.substring(1) : part;
-            if (!interestIds.contains(id)) {
+        Set<Block> wanted = BlockSpec.blocks(spec);
+        if (wanted.isEmpty()) {
+            return false;
+        }
+        for (Block b : wanted) {
+            if (!interest.containsKey(b)) {
                 return false;
             }
         }
@@ -83,6 +144,7 @@ public final class WorldScanner {
             level = lv;
             sections.clear();
             lastCenter = Long.MIN_VALUE;
+            fullPass = false;
         }
         int pcx = p.blockPosition().getX() >> 4;
         int pcz = p.blockPosition().getZ() >> 4;
@@ -103,6 +165,7 @@ public final class WorldScanner {
             if (cursor >= queue.size()) {
                 cursor = 0;
                 idle = IDLE_TICKS;
+                fullPass = true;
                 break;
             }
         }
@@ -159,8 +222,34 @@ public final class WorldScanner {
         }
     }
 
-    /** Nearest indexed blocks matching the spec, closest first. May be slightly stale; callers re-verify. */
+    /** Rescans the 3x3 chunks (5 sections tall) around the origin, at most once every few ticks. */
+    private void refreshAround(BlockPos origin) {
+        ClientLevel lv = level;
+        if (lv == null || interest.isEmpty()) {
+            return;
+        }
+        long now = lv.getGameTime();
+        if (now - lastRefreshTick < REFRESH_EVERY_TICKS) {
+            return;
+        }
+        lastRefreshTick = now;
+        int pcx = origin.getX() >> 4;
+        int pcz = origin.getZ() >> 4;
+        int psy = Math.floorDiv(origin.getY(), 16);
+        int lo = Math.max(psy - 2, lv.getMinSectionY());
+        int hi = Math.min(psy + 2, lv.getMaxSectionY());
+        for (int cx = pcx - 1; cx <= pcx + 1; cx++) {
+            for (int cz = pcz - 1; cz <= pcz + 1; cz++) {
+                for (int sy = lo; sy <= hi; sy++) {
+                    scan(cx, sy, cz);
+                }
+            }
+        }
+    }
+
+    /** Nearest indexed blocks matching the spec, closest first. Callers re-verify against the live world. */
     public List<BlockPos> find(String spec, BlockPos origin, double maxDist, int limit) {
+        refreshAround(origin);
         double max2 = maxDist * maxDist;
         List<BlockPos> out = new ArrayList<>();
         for (Map<String, LongArrayList> m : sections.values()) {

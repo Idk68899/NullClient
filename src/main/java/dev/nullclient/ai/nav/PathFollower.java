@@ -3,6 +3,7 @@ package dev.nullclient.ai.nav;
 import dev.nullclient.ai.AIKeys;
 import dev.nullclient.ai.bt.Blackboard;
 import dev.nullclient.ai.task.Breaker;
+import dev.nullclient.ai.task.Placer;
 import dev.nullclient.core.input.InputOverride;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -15,9 +16,10 @@ import java.util.List;
 
 /**
  * Walks a {@link Path} by emitting movement actions and a target view angle into the blackboard.
- * Handles sprinting, step-ups, descents, swimming (rising and sinking toward the next node), parkour take-off
- * and tunnelling. It waits briefly to turn toward the next node but never forever. Reports failure when stuck,
- * off-route, or when upcoming nodes are no longer safe.
+ * Handles sprinting, step-ups, descents, swimming, parkour take-off, tunnelling (breaking blocks in the way,
+ * always the first block along the line of sight) and pillaring (jump, then place a block underneath).
+ * It waits briefly to turn toward the next node but never forever. Reports failure when stuck, off-route,
+ * or when upcoming nodes are no longer safe.
  */
 public final class PathFollower {
     public enum Result { RUNNING, DONE, FAILED }
@@ -110,9 +112,14 @@ public final class PathFollower {
             WorldView view = new WorldView(level);
             for (int i = index; i < Math.min(path.size(), index + 3); i++) {
                 PathNode n = path.get(i);
-                boolean ok = n.move.isDig()
-                        ? view.clearable(n.x, n.y, n.z) && view.clearable(n.x, n.y + 1, n.z)
-                        : view.canStand(n.x, n.y, n.z);
+                boolean ok;
+                if (n.move == MoveType.PILLAR) {
+                    ok = view.bodyFree(n.x, n.y, n.z) && view.bodyFree(n.x, n.y + 1, n.z);
+                } else if (n.move.isDig()) {
+                    ok = view.clearable(n.x, n.y, n.z) && view.clearable(n.x, n.y + 1, n.z);
+                } else {
+                    ok = view.canStand(n.x, n.y, n.z);
+                }
                 if (!ok) {
                     return Result.FAILED;
                 }
@@ -134,7 +141,7 @@ public final class PathFollower {
                 if (passable(level, cell)) {
                     continue;
                 }
-                Breaker.Result r = Breaker.step(bb, cell);
+                dev.nullclient.ai.task.Breaker.Result r = Breaker.step(bb, cell);
                 if (r == Breaker.Result.FAILED) {
                     return Result.FAILED;
                 }
@@ -186,6 +193,22 @@ public final class PathFollower {
                     actions = 0;
                 }
             }
+            case PILLAR -> {
+                // stand still, look down, jump, and place a block into the cell we just left once we are above it
+                actions = 0;
+                InputOverride.clearDirection();
+                bb.set(AIKeys.PITCH, 90.0f);
+                if (p.onGround() && pos.y < t.y - 0.05) {
+                    actions |= InputOverride.JUMP;
+                }
+                if (!p.onGround() && pos.y >= prev.y + 1.02) {
+                    if (Placer.count(p) == 0) {
+                        bb.set(AIKeys.FAIL_REASON, "no blocks to place for climbing");
+                        return Result.FAILED;
+                    }
+                    Placer.placeInto(bb, new BlockPos(prev.x, prev.y, prev.z));
+                }
+            }
             default -> {
             }
         }
@@ -193,7 +216,7 @@ public final class PathFollower {
         // Water: rise or sink toward the next node's height instead of always floating up.
         if (p.isInLava()) {
             actions |= InputOverride.JUMP;
-        } else if (p.isInWater()) {
+        } else if (p.isInWater() && t.move != MoveType.PILLAR) {
             double dyTarget = t.y - pos.y;
             if (dyTarget > 0.3) {
                 actions |= InputOverride.JUMP;
@@ -204,7 +227,7 @@ public final class PathFollower {
 
         // Wait a moment to turn toward the next node, but never forever.
         float diff = Mth.wrapDegrees(yaw - p.getYRot());
-        if (grounded && Math.abs(diff) > 50.0f && !InputOverride.velocityMode()) {
+        if (grounded && Math.abs(diff) > 50.0f && !InputOverride.velocityMode() && t.move != MoveType.PILLAR) {
             if (turnWait < TURN_PATIENCE) {
                 turnWait++;
                 actions = 0;

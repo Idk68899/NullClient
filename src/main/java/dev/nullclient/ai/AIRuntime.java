@@ -27,8 +27,10 @@ public final class AIRuntime {
         Knowledge k = Knowledge.get();
         report.add("knowledge loaded");
         WorldScanner.INSTANCE.setInterest(k.scanIds());
+        BlackBox.clear();
         started = true;
         report.add("world scanner on (indexing logs, ores and crafting stations)");
+        report.add("flight recorder on (old recording deleted)");
         LocalPlayer p = mc.player;
         if (p != null && mc.level != null) {
             report.add(AIMemory.INSTANCE.load(mc.level, p.blockPosition()));

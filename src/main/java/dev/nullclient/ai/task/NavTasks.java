@@ -25,7 +25,8 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * Leaf implementations and tree builders for navigation tasks. Route planning first tries plain walking; if
  * there is no walking route (and it is not exploring), it retries once allowing tunnelling and pillaring.
- * Cells where a route failed are remembered and avoided by the next plan.
+ * Cells where a route failed are remembered and avoided by the next plan. A missing goal never crashes the
+ * planner: it stays put and lets the caller decide again.
  */
 public final class NavTasks {
     private static final int MAX_REPLANS = 12;
@@ -119,6 +120,11 @@ public final class NavTasks {
         LocalPlayer p = bb.get(AIKeys.PLAYER);
         ClientLevel level = bb.get(AIKeys.LEVEL);
         BlockPos goal = bb.get(AIKeys.GOAL);
+        if (goal == null) {
+            bb.set(AIKeys.GOAL, p.blockPosition());
+            RunLog.add("a route was requested without a destination - staying put and re-evaluating");
+            return Status.RUNNING;
+        }
         AStarPathfinder.Search search = bb.get(AIKeys.SEARCH);
         if (search == null) {
             if (!p.onGround() && !p.isInWater()) {

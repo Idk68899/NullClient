@@ -1,7 +1,9 @@
 name: inspect
 on:
-  push:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/inspect.yml"
 jobs:
   inspect:
     runs-on: ubuntu-latest
@@ -15,23 +17,24 @@ jobs:
         with:
           gradle-version: 9.5.1
       - run: gradle build --no-daemon || true
-      - name: Dump Minecraft classes
+      - name: Dump account and multiplayer screen classes
         run: |
           for JAR in $(find ~/.gradle -name '*.jar' -size +20M | grep -i minecraft); do
             if unzip -l "$JAR" | grep -q 'com/mojang/blaze3d/platform/Window.class'; then
               echo "=============== JAR: $JAR"
-              echo "----- Window: first 40 methods"
-              javap -p -cp "$JAR" com.mojang.blaze3d.platform.Window | head -40 || true
-              echo "----- renderFrame calls"
-              javap -p -c -cp "$JAR" net.minecraft.client.Minecraft | awk '/public void renderFrame\(boolean\);/ {f=1} f && /invoke/ {print} f && /^$/ {exit}' || true
-              echo "----- runTick calls (render-related)"
-              javap -p -c -cp "$JAR" net.minecraft.client.Minecraft | awk '/private void runTick\(boolean\);/ {f=1} f && /invoke/ {print} f && /^$/ {exit}' | grep -iE 'render|frame|blit|present|swap|window' || true
-              echo "----- classes that call glfwSwapBuffers"
-              for cls in $(unzip -l "$JAR" | awk '{print $4}' | grep -E '^com/mojang/.*\.class$' | sed 's/\.class$//; s#/#.#g'); do
-                javap -p -c -cp "$JAR" "$cls" 2>/dev/null | awk -v c="$cls" '/^  [a-z].*\);$/ {m=$0} /glfwSwapBuffers/ {print c " :: " m}' || true
+              echo "----- Minecraft: user/session/screen members"
+              javap -p -cp "$JAR" net.minecraft.client.Minecraft | grep -iE 'user|session|setScreen|screen\(' || true
+              for NAME in 'client/User' 'ConnectScreen' 'DirectJoinServerScreen' 'JoinMultiplayerScreen' 'multiplayer/ServerData' 'multiplayer/ServerList' 'TitleScreen'; do
+                for F in $(unzip -l "$JAR" | awk '{print $4}' | grep -E "net/minecraft/client/.*${NAME}\.class$" | head -3); do
+                  CLS=$(echo "$F" | sed 's/\.class$//; s#/#.#g')
+                  echo "----- $CLS"
+                  javap -p -cp "$JAR" "$CLS" | head -70 || true
+                done
               done
-              echo "----- surface/backend classes"
-              unzip -l "$JAR" | awk '{print $4}' | grep -iE 'GpuSurface|GlSurface|GpuBackend|Presenter|Vulkan' | head -40 || true
+              echo "----- Screen / Button / EditBox members"
+              javap -p -cp "$JAR" net.minecraft.client.gui.screens.Screen | grep -iE 'addRenderableWidget|init\(|rebuildWidgets|width|height' || true
+              javap -p -cp "$JAR" net.minecraft.client.gui.components.Button | grep -iE 'builder|Builder|create' || true
+              javap -p -cp "$JAR" net.minecraft.client.gui.components.EditBox | grep -iE 'setValue|getValue' || true
             fi
           done
           exit 0

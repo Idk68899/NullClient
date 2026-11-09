@@ -11,7 +11,8 @@ import net.minecraft.world.phys.Vec3;
  * Single arbitrated channel through which the AI engine and the macro player drive the local player.
  * First it presses the real key bindings each tick. If that visibly fails to move the player, it falls back
  * to setting the player's velocity directly at vanilla walking and sprinting speeds, heading in a world-space
- * direction so it does not depend on where the camera is pointing.
+ * direction so it does not depend on where the camera is pointing. A jump can also be forced directly
+ * ({@link #forceJump()}), which works even when the launcher ignores the jump key.
  */
 public final class InputOverride {
     public static final int FORWARD = 1;
@@ -37,6 +38,7 @@ public final class InputOverride {
     private static volatile boolean hasDir;
     private static volatile double dirX;
     private static volatile double dirZ;
+    private static volatile boolean jumpAssist;
     private static boolean driving;
     private static boolean velocityMode;
     private static boolean haveLast;
@@ -101,6 +103,11 @@ public final class InputOverride {
         hasDir = false;
     }
 
+    /** Requests one direct jump on the next tick if the player is on the ground (independent of key presses). */
+    public static void forceJump() {
+        jumpAssist = true;
+    }
+
     /** Call once per client tick, after the AI and macros have set their actions. */
     public static void drive(Minecraft mc) {
         Options o = mc.options;
@@ -116,6 +123,7 @@ public final class InputOverride {
             haveLast = false;
             window = 0;
             moved = 0;
+            jumpAssist = false;
             return;
         }
         int a = actions;
@@ -125,6 +133,13 @@ public final class InputOverride {
         } else {
             press(o, a);
             watchForStall(p, a);
+        }
+        if (jumpAssist) {
+            jumpAssist = false;
+            if (p.onGround()) {
+                Vec3 v = p.getDeltaMovement();
+                p.setDeltaMovement(v.x, JUMP_VELOCITY, v.z);
+            }
         }
         driving = true;
     }

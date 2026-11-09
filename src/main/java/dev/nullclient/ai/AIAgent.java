@@ -23,7 +23,8 @@ import java.util.List;
 
 /**
  * A behavior tree bound to one local profile. Drives the local player while that profile is active.
- * The camera eases toward its target angle instead of snapping, and in water the agent surfaces for air in time.
+ * The camera eases toward its target angle, in water the agent surfaces for air in time, and spots it gave up on
+ * and areas it already explored are remembered (see AIMemory) so it does not repeat itself.
  */
 public final class AIAgent {
     public enum State { RUNNING, SUSPENDED, SUCCEEDED, FAILED, CANCELLED }
@@ -31,6 +32,7 @@ public final class AIAgent {
     public static final String OWNER = "ai";
     private static final int SCAN_RADIUS = 96;
     private static final int ROUTE_REPEAT_TICKS = 200;
+    private static final int MEMORY_EVERY = 20;
     private static final float YAW_EASE = 0.35f;
     private static final float YAW_MAX = 22.0f;
     private static final float PITCH_EASE = 0.35f;
@@ -44,6 +46,7 @@ public final class AIAgent {
     private String message = "";
     private long ticks;
     private boolean surfacing;
+    private boolean wasExploring;
 
     private String seenSpec;
     private BlockPos seenTarget;
@@ -57,6 +60,11 @@ public final class AIAgent {
         this.label = label;
         this.root = root;
         this.bb = bb;
+        // Spots given up on in earlier steps are restored automatically whenever the per-step set is reset.
+        bb.setDefault(AIKeys.BAD_TARGETS, () -> {
+            ClientLevel lv = Minecraft.getInstance().level;
+            return lv == null ? new AIKeys.BadSet() : AIMemory.INSTANCE.liveBad(lv);
+        });
     }
 
     public Profile profile() {
@@ -217,6 +225,30 @@ public final class AIAgent {
         bb.set(AIKeys.ACTIONS, a);
     }
 
+    /** When exploring starts: avoid areas already searched, and remember this one. */
+    private void rememberExploring(LocalPlayer p, ClientLevel level) {
+        boolean exploring = bb.getOrDefault(AIKeys.EXPLORING, false);
+        if (exploring && !wasExploring) {
+            BlockPos g = bb.get(AIKeys.GOAL);
+            if (g != null && AIMemory.INSTANCE.nearExplored(level, g)) {
+                BlockPos better = AIMemory.INSTANCE.pickExploreGoal(level, p);
+                if (better != null) {
+                    bb.set(AIKeys.GOAL, better);
+                    bb.set(AIKeys.PATH, null);
+                    bb.set(AIKeys.SEARCH, null);
+                    bb.set(AIKeys.FOLLOWER, null);
+                    g = better;
+                    RunLog.add("explore: picked a new area instead of one already searched, " + better.toShortString());
+                }
+            }
+            AIMemory.INSTANCE.markExplored(level, p.blockPosition());
+            if (g != null) {
+                AIMemory.INSTANCE.markExplored(level, g);
+            }
+        }
+        wasExploring = exploring;
+    }
+
     /** Eases an angle toward a target: proportional step, capped, snapping when very close. */
     private static float ease(float current, float diff, float factor, float max) {
         if (Math.abs(diff) < 1.0f) {
@@ -247,6 +279,14 @@ public final class AIAgent {
             message = "internal error: " + e;
             RunLog.add("internal error: " + e);
             return State.FAILED;
+        }
+
+        rememberExploring(p, level);
+        if (ticks % MEMORY_EVERY == 0) {
+            AIKeys.BadSet cur = bb.get(AIKeys.BAD_TARGETS);
+            if (cur != null && !cur.isEmpty()) {
+                AIMemory.INSTANCE.rememberBad(level, cur);
+            }
         }
 
         keepAlive(p, level);

@@ -22,7 +22,8 @@ import java.util.concurrent.CompletableFuture;
 /** Registers /ai as a real client command so Minecraft shows suggestions; it feeds the same handler as ".ai". */
 public final class AiCommandTree {
     private static final List<String> VERBS = List.of(
-            "get", "mine", "plan", "goto", "wander", "follow", "stop", "stopall", "list", "profiles", "new", "menu", "debug", "help");
+            "start", "off", "get", "mine", "plan", "goto", "wander", "follow", "stop", "stopall", "home", "sethome", "back",
+            "where", "forget", "why", "talk", "list", "profiles", "new", "menu", "debug", "help");
     private static final int MAX_SUGGESTIONS = 60;
 
     private AiCommandTree() {

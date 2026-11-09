@@ -7,6 +7,7 @@ import dev.nullclient.ai.plan.Planner;
 import dev.nullclient.ai.plan.Step;
 import dev.nullclient.ai.task.MineTasks;
 import dev.nullclient.ai.task.NavTasks;
+import dev.nullclient.ai.task.Watched;
 import dev.nullclient.core.session.Profile;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -17,7 +18,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/** Parses task strings into agents. */
+/** Parses task strings into agents. goto, get and mine run inside a stuck watchdog. */
 public final class TaskFactory {
     public static final String USAGE = "get <item> [count] | plan <item> [count] | goto <x> <y> <z> | mine <block> [count] | wander [radius] | follow <player> | stop";
 
@@ -40,7 +41,8 @@ public final class TaskFactory {
                 }
                 BlockPos goal = new BlockPos(coord(args[1], p.getX()), coord(args[2], p.getY()), coord(args[3], p.getZ()));
                 bb.set(AIKeys.GOAL, goal);
-                return new AIAgent(profile, "goto " + goal.getX() + " " + goal.getY() + " " + goal.getZ(), NavTasks.gotoTree(), bb);
+                return new AIAgent(profile, "goto " + goal.getX() + " " + goal.getY() + " " + goal.getZ(),
+                        new Watched(NavTasks.gotoTree()), bb);
             }
             case "get": {
                 if (args.length < 2 || args.length > 3) {
@@ -56,7 +58,7 @@ public final class TaskFactory {
                 } catch (Planner.PlanException e) {
                     throw new IllegalArgumentException(e.getMessage());
                 }
-                return new AIAgent(profile, "get " + item + " x" + count, new GoalNode(item, count), bb);
+                return new AIAgent(profile, "get " + item + " x" + count, new Watched(new GoalNode(item, count)), bb);
             }
             case "mine": {
                 if (args.length < 2 || args.length > 3) {
@@ -70,7 +72,7 @@ public final class TaskFactory {
                 bb.set(AIKeys.MINE_BLOCK, block);
                 bb.set(AIKeys.MINE_COUNT, count);
                 bb.set(AIKeys.MINED, 0);
-                return new AIAgent(profile, "mine " + block + " x" + count, MineTasks.mineTree(), bb);
+                return new AIAgent(profile, "mine " + block + " x" + count, new Watched(MineTasks.mineTree()), bb);
             }
             case "wander": {
                 int radius = args.length >= 2 ? Integer.parseInt(args[1]) : 16;

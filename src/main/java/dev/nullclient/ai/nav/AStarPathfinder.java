@@ -15,9 +15,10 @@ import java.util.Set;
  *
  * <p>Move set: walk, diagonal, step-up, descend (up to {@value #MAX_FALL} blocks), parkour jumps (2-4 blocks),
  * swim up/down inside water, and, when allowed, DIG_WALK / DIG_DOWN / DIG_UP moves that tunnel through safe
- * solid blocks plus PILLAR (jump and place a block underneath to climb). In dig mode the heuristic is weighted
- * so tunnels head almost straight for the goal. When the node budget runs out the search yields a partial path
- * to the closest explored node.
+ * solid blocks plus PILLAR (jump and place a block underneath to climb). Pillar moves can be chained: a cell
+ * reached by pillaring counts as having a floor, because the block will be there once it is placed.
+ * In dig mode the heuristic is weighted so tunnels head almost straight for the goal. When the node budget
+ * runs out the search yields a partial path to the closest explored node.
  */
 public final class AStarPathfinder {
     public static final int MAX_FALL = 3;
@@ -183,9 +184,13 @@ public final class AStarPathfinder {
                 }
             }
 
-            // climb by placing a block under our feet
-            if (canPillar && !v.isWater(x, y, z) && v.canStand(x, y, z) && v.bodyFree(x, y + 2, z)) {
-                offer(n, x, y + 1, z, MoveType.PILLAR, PILLAR_COST);
+            // climb by placing a block under our feet; chains are allowed because a block we will place counts as floor
+            if (canPillar && !v.isWater(x, y, z) && v.bodyFree(x, y + 2, z)) {
+                boolean standing = v.canStand(x, y, z);
+                boolean virtualFloor = n.move == MoveType.PILLAR && v.bodyFree(x, y, z) && v.bodyFree(x, y + 1, z);
+                if (standing || virtualFloor) {
+                    offer(n, x, y + 1, z, MoveType.PILLAR, PILLAR_COST);
+                }
             }
 
             for (int[] d : CARDINAL) {

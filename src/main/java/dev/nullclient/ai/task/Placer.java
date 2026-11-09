@@ -48,8 +48,18 @@ public final class Placer {
         return n;
     }
 
+    public static boolean hasBlocks(LocalPlayer p) {
+        return count(p) > 0;
+    }
+
+    /** True if the item in the selected hotbar slot is a placeable block. */
+    public static boolean inHand(LocalPlayer p) {
+        Inventory inv = p.getInventory();
+        return placeable(inv.getItem(inv.getSelectedSlot()));
+    }
+
     /** Puts a placeable block in the selected hotbar slot. Returns true once one is in hand. */
-    private static boolean equip(LocalPlayer p) {
+    public static boolean equip(LocalPlayer p) {
         Minecraft mc = Minecraft.getInstance();
         Inventory inv = p.getInventory();
         for (int i = 0; i < 9; i++) {

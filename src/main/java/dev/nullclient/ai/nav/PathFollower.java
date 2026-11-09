@@ -3,7 +3,7 @@ package dev.nullclient.ai.nav;
 import dev.nullclient.ai.AIKeys;
 import dev.nullclient.ai.bt.Blackboard;
 import dev.nullclient.ai.task.Breaker;
-import dev.nullclient.ai.task.Placer;
+import dev.nullclient.ai.task.Pillar;
 import dev.nullclient.core.input.InputOverride;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -17,10 +17,10 @@ import java.util.List;
 /**
  * Walks a {@link Path} by emitting movement actions and a target view angle into the blackboard.
  *
- * <p>Smooth steering: on straight stretches it aims midway between the current and next node instead of at the
- * current node's centre, so the heading changes gradually; sprint has hysteresis so it does not flicker. It also
- * handles step-ups, descents, swimming, parkour take-off, tunnelling (breaking blocks in the way) and pillaring.
- * On failure it records why, so the planner can route around it and ".ai why" can show it.
+ * <p>Smooth steering: on straight stretches it aims midway between the current and next node, and sprint has
+ * hysteresis. It also handles step-ups, descents, swimming, parkour take-off, tunnelling (breaking blocks in the
+ * way) and pillaring (delegated to {@link Pillar}). On failure it records why, so the planner can route around
+ * it and ".ai why" can show it.
  */
 public final class PathFollower {
     public enum Result { RUNNING, DONE, FAILED }
@@ -38,6 +38,7 @@ public final class PathFollower {
     private int age;
     private boolean sprinting;
     private String failure = "";
+    private Pillar pillar;
 
     public PathFollower(Path path) {
         this.path = path;
@@ -238,18 +239,14 @@ public final class PathFollower {
                 }
             }
             case PILLAR -> {
-                // stand still, look down, jump, and place a block into the cell we just left once we are above it
-                actions = 0;
-                InputOverride.clearDirection();
-                bb.set(AIKeys.PITCH, 90.0f);
-                if (p.onGround() && pos.y < t.y - 0.05) {
-                    actions |= InputOverride.JUMP;
+                if (pillar == null) {
+                    pillar = new Pillar();
                 }
-                if (!p.onGround() && pos.y >= prev.y + 1.02) {
-                    if (Placer.count(p) == 0) {
-                        return fail("no blocks to place for climbing");
-                    }
-                    Placer.placeInto(bb, new BlockPos(prev.x, prev.y, prev.z));
+                actions = 0;
+                stuck = 0;
+                Pillar.Result pr = pillar.step(bb, p, level, prev.x, prev.y, prev.z);
+                if (pr == Pillar.Result.FAILED) {
+                    return fail(pillar.failure());
                 }
             }
             default -> {

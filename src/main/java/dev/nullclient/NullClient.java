@@ -2,8 +2,8 @@ package dev.nullclient;
 
 import dev.nullclient.ai.AICommand;
 import dev.nullclient.ai.AIManager;
+import dev.nullclient.ai.AIMemory;
 import dev.nullclient.ai.AiCommandTree;
-import dev.nullclient.ai.plan.Knowledge;
 import dev.nullclient.ai.world.WorldScanner;
 import dev.nullclient.core.event.EventBus;
 import dev.nullclient.core.event.Events;
@@ -60,7 +60,7 @@ public final class NullClient implements ClientModInitializer {
         bus.register(macros);
         bus.register(ai);
         bus.register(new AICommand(ai, profiles));
-        WorldScanner.INSTANCE.setInterest(Knowledge.get().scanIds());
+        // The scanner stays idle until ".ai start" tells it what to index.
         bus.register(WorldScanner.INSTANCE);
 
         NullUI built = new NullUI(this);
@@ -84,6 +84,7 @@ public final class NullClient implements ClientModInitializer {
         ai.cancelAll();
         macros.shutdown();
         routes.shutdown();
+        AIMemory.INSTANCE.save();
         store.save();
         if (ui != null) {
             ui.shutdown();

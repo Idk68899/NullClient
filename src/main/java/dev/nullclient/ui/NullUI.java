@@ -30,6 +30,7 @@ public final class NullUI {
 
     private boolean ready;
     private boolean failed;
+    private String failure = "";
     private boolean toggleDown;
     private boolean panicDown;
     private volatile boolean pendingToggle;
@@ -50,7 +51,7 @@ public final class NullUI {
     }
 
     public String status() {
-        return ready ? "ready" : failed ? "FAILED to initialise (see latest.log)" : "not started yet";
+        return ready ? "ready" : failed ? "FAILED to initialise: " + failure : "not started yet";
     }
 
     public boolean isMenuOpen() {
@@ -105,6 +106,19 @@ public final class NullUI {
         }
     }
 
+    private static String describe(Throwable t) {
+        Throwable root = t;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String text = t.getClass().getSimpleName() + ": " + (t.getMessage() == null ? "" : t.getMessage());
+        if (root != t) {
+            text += " <- " + root.getClass().getSimpleName() + ": " + (root.getMessage() == null ? "" : root.getMessage());
+        }
+        text = text.replace('\n', ' ').replace('\r', ' ');
+        return text.length() > 220 ? text.substring(0, 220) + "..." : text;
+    }
+
     private boolean ensureInit() {
         if (ready) {
             return true;
@@ -130,6 +144,7 @@ public final class NullUI {
             NullClient.LOG.info("ImGui initialised");
         } catch (Throwable t) {
             failed = true;
+            failure = describe(t);
             NullClient.LOG.error("ImGui initialisation failed; UI disabled", t);
         }
         return ready;

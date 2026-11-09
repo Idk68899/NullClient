@@ -1,29 +1,37 @@
 package dev.nullclient.ai.task;
 
 import dev.nullclient.ai.AIKeys;
+import dev.nullclient.ai.BlackBox;
 import dev.nullclient.ai.RunLog;
 import dev.nullclient.ai.bt.Blackboard;
 import dev.nullclient.ai.bt.Node;
 import dev.nullclient.ai.bt.Status;
+import dev.nullclient.ai.nav.PathFollower;
 import dev.nullclient.core.input.InputOverride;
-import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Inventory;
 
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Wraps a whole task with a stuck watchdog. If there is no progress for {@value #LIMIT_TICKS} ticks (no movement
- * of 2+ blocks, no inventory change, nothing mined, no new block being broken, no menu open) it escalates:
- * 1) drop the current target, clear the route and jump; 2) also clear avoided cells, allow tunnels/pillars and run
- * in a random direction for a moment; 3) give up with a clear message. Everything is logged for ".ai why".
+ * Wraps a whole task with a stuck watchdog and the flight recorder.
+ * Stuck means: no progress for {@value #LIMIT_TICKS} ticks (no movement of 2+ blocks, no inventory change, nothing
+ * mined, no new block being broken, no menu open) OR spinning in place (turning more than 540 degrees in 3 seconds
+ * without leaving a 1.5 block area). It then escalates: 1) drop the target, clear the route and jump; 2) also
+ * clear avoided cells, allow tunnels/pillars and run in a random direction for a moment; 3) give up with a clear
+ * message. Everything is logged for ".ai why" and the recording is saved when something goes wrong.
  */
 public final class Watched implements Node {
     private static final int LIMIT_TICKS = 400;
     private static final int CHECK_EVERY = 10;
     private static final double MOVE_BLOCKS = 2.0;
     private static final int NUDGE_TICKS = 25;
+    private static final int SPIN_WINDOW = 60;
+    private static final double SPIN_DEGREES = 540.0;
+    private static final double SPIN_MOVE = 1.5;
+    private static final int SAMPLE_EVERY = 2;
 
     private final Node child;
     private long tick;
@@ -35,6 +43,10 @@ public final class Watched implements Node {
     private int level;
     private int nudge;
     private float nudgeYaw;
+    private float lastYaw = Float.NaN;
+    private double spinSum;
+    private int spinTicks;
+    private BlockPos spinAnchor;
 
     public Watched(Node child) {
         this.child = child;
@@ -44,16 +56,53 @@ public final class Watched implements Node {
     public Status tick(Blackboard bb) {
         Status s = child.tick(bb);
         LocalPlayer p = bb.get(AIKeys.PLAYER);
-        if (s != Status.RUNNING || p == null) {
+        if (p == null) {
             return s;
         }
         tick++;
+        if (tick % SAMPLE_EVERY == 0) {
+            BlackBox.sample(tick, p.getX(), p.getY(), p.getZ(), p.getYRot(), p.getXRot(),
+                    bb.getOrDefault(AIKeys.ACTIONS, 0), note(bb));
+        }
+        if (s == Status.FAILURE) {
+            String reason = bb.get(AIKeys.FAIL_REASON);
+            BlackBox.dump("task failed: " + (reason == null ? "unknown" : reason));
+            return s;
+        }
+        if (s != Status.RUNNING) {
+            return s;
+        }
         if (nudge > 0) {
             nudge--;
             applyNudge(bb);
             anchorTick = tick;
             return Status.RUNNING;
         }
+
+        float yawNow = p.getYRot();
+        if (!Float.isNaN(lastYaw)) {
+            spinSum += Math.abs(Mth.wrapDegrees(yawNow - lastYaw));
+        }
+        lastYaw = yawNow;
+        if (spinAnchor == null) {
+            spinAnchor = p.blockPosition();
+        }
+        if (++spinTicks >= SPIN_WINDOW) {
+            double moved = Math.sqrt(p.blockPosition().distSqr(spinAnchor));
+            boolean spinning = spinSum > SPIN_DEGREES && moved < SPIN_MOVE;
+            double turned = spinSum;
+            spinSum = 0.0;
+            spinTicks = 0;
+            spinAnchor = p.blockPosition();
+            if (spinning) {
+                RunLog.add("spinning in place near " + p.blockPosition().toShortString() + ": turned "
+                        + Math.round(turned) + " degrees without moving");
+                BlackBox.dump("spinning in place");
+                anchorTick = tick;
+                return escalate(bb, p, "spinning in place");
+            }
+        }
+
         if (tick % CHECK_EVERY != 0) {
             return Status.RUNNING;
         }
@@ -82,19 +131,38 @@ public final class Watched implements Node {
             return Status.RUNNING;
         }
         anchorTick = tick;
-        return escalate(bb, p);
+        BlackBox.dump("no progress for " + (LIMIT_TICKS / 20) + "s");
+        return escalate(bb, p, "no progress for " + (LIMIT_TICKS / 20) + "s");
     }
 
-    private Status escalate(Blackboard bb, LocalPlayer p) {
+    private static String note(Blackboard bb) {
+        StringBuilder sb = new StringBuilder();
+        BlockPos t = bb.get(AIKeys.TARGET);
+        if (t != null) {
+            sb.append("tgt=").append(t.toShortString()).append(' ');
+        }
+        BlockPos g = bb.get(AIKeys.GOAL);
+        if (g != null) {
+            sb.append("goal=").append(g.toShortString()).append(' ');
+        }
+        PathFollower f = bb.get(AIKeys.FOLLOWER);
+        if (f != null) {
+            sb.append(f.currentNode().move.name().toLowerCase()).append(' ')
+                    .append(f.index()).append('/').append(f.path().size() - 1);
+        }
+        return sb.toString().trim();
+    }
+
+    private Status escalate(Blackboard bb, LocalPlayer p, String why) {
         level++;
         String where = p.blockPosition().toShortString();
         if (level >= 3) {
-            String why = "stuck near " + where + " with no progress for " + (LIMIT_TICKS / 20) + "s";
-            RunLog.add(why + " (recovery step 3) - giving up");
-            bb.set(AIKeys.FAIL_REASON, why);
+            String msg = "stuck near " + where + " (" + why + ")";
+            RunLog.add(msg + " - recovery step 3, giving up");
+            bb.set(AIKeys.FAIL_REASON, msg);
             return Status.FAILURE;
         }
-        RunLog.add("stuck near " + where + " for " + (LIMIT_TICKS / 20) + "s - recovery step " + level);
+        RunLog.add("stuck near " + where + " (" + why + ") - recovery step " + level);
         dropAndReset(bb);
         InputOverride.forceJump();
         if (level == 2) {
@@ -148,6 +216,9 @@ public final class Watched implements Node {
         level = 0;
         nudge = 0;
         anchor = null;
+        spinSum = 0.0;
+        spinTicks = 0;
+        spinAnchor = null;
     }
 
     @Override

@@ -27,8 +27,8 @@ import java.util.Set;
  *
  * <p>It learns new block types on demand ({@link #ensureIndexed}), except very common blocks (dirt, stone, sand...)
  * which would swamp the index; callers look for those directly around the player. The area around the player
- * is also refreshed every half second so freshly placed or broken blocks (a crafting table the AI just placed)
- * are found immediately.
+ * is also refreshed every half second so freshly placed or broken blocks are found immediately.
+ * When {@link Vision} is enabled, {@link #find} only returns blocks the AI has actually seen.
  */
 public final class WorldScanner {
     public static final WorldScanner INSTANCE = new WorldScanner();
@@ -140,6 +140,7 @@ public final class WorldScanner {
             sections.clear();
             return;
         }
+        Vision.update(mc);
         if (lv != level) {
             level = lv;
             sections.clear();
@@ -260,7 +261,7 @@ public final class WorldScanner {
                 LongArrayList l = e.getValue();
                 for (int i = 0; i < l.size(); i++) {
                     BlockPos pos = BlockPos.of(l.getLong(i));
-                    if (pos.distSqr(origin) <= max2) {
+                    if (pos.distSqr(origin) <= max2 && Vision.allowed(pos)) {
                         out.add(pos);
                     }
                 }

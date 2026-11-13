@@ -1,9 +1,6 @@
 name: inspect
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/inspect.yml"
 jobs:
   inspect:
     runs-on: ubuntu-latest
@@ -17,24 +14,21 @@ jobs:
         with:
           gradle-version: 9.5.1
       - run: gradle build --no-daemon || true
-      - name: Dump account and multiplayer screen classes
+      - name: Inspect
         run: |
           for JAR in $(find ~/.gradle -name '*.jar' -size +20M | grep -i minecraft); do
             if unzip -l "$JAR" | grep -q 'com/mojang/blaze3d/platform/Window.class'; then
-              echo "=============== JAR: $JAR"
-              echo "----- Minecraft: user/session/screen members"
-              javap -p -cp "$JAR" net.minecraft.client.Minecraft | grep -iE 'user|session|setScreen|screen\(' || true
-              for NAME in 'client/User' 'ConnectScreen' 'DirectJoinServerScreen' 'JoinMultiplayerScreen' 'multiplayer/ServerData' 'multiplayer/ServerList' 'TitleScreen'; do
-                for F in $(unzip -l "$JAR" | awk '{print $4}' | grep -E "net/minecraft/client/.*${NAME}\.class$" | head -3); do
-                  CLS=$(echo "$F" | sed 's/\.class$//; s#/#.#g')
-                  echo "----- $CLS"
-                  javap -p -cp "$JAR" "$CLS" | head -70 || true
-                done
-              done
-              echo "----- Screen / Button / EditBox members"
-              javap -p -cp "$JAR" net.minecraft.client.gui.screens.Screen | grep -iE 'addRenderableWidget|init\(|rebuildWidgets|width|height' || true
-              javap -p -cp "$JAR" net.minecraft.client.gui.components.Button | grep -iE 'builder|Builder|create' || true
-              javap -p -cp "$JAR" net.minecraft.client.gui.components.EditBox | grep -iE 'setValue|getValue' || true
+              echo "##### BEGIN-INSPECT $JAR"
+              show() { for F in $(unzip -l "$JAR" | awk '{print $4}' | grep -E "$1" | head -${2:-2}); do CLS=$(echo "$F" | sed 's/\.class$//; s#/#.#g'); echo "--- $CLS"; javap -public -cp "$JAR" "$CLS" | head -${3:-45}; done; }
+              show 'net/minecraft/client/gui/Gui[A-Za-z]*Graphics[A-Za-z]*\.class$' 2 55
+              show 'com/mojang/blaze3d/platform/NativeImage\.class$' 1 30
+              show 'net/minecraft/client/renderer/texture/(DynamicTexture|TextureManager)\.class$' 2 25
+              show 'net/minecraft/client/User\.class$' 1 20
+              show 'net/minecraft/client/gui/screens/ConnectScreen\.class$' 1 20
+              show 'net/minecraft/client/multiplayer/(ServerData|resolver/ServerAddress)\.class$' 2 25
+              echo "--- Minecraft user/session members"
+              javap -public -cp "$JAR" net.minecraft.client.Minecraft | grep -iE 'user|session' | head -10
+              echo "##### END-INSPECT"
             fi
           done
           exit 0

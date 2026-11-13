@@ -1,6 +1,7 @@
 package dev.nullclient.ai;
 
 import dev.nullclient.NullClient;
+import dev.nullclient.ai.world.Vision;
 import dev.nullclient.ai.world.WorldScanner;
 import dev.nullclient.core.event.Events;
 import dev.nullclient.core.event.Priority;
@@ -86,7 +87,7 @@ public final class AICommand {
         if (t.length == 1 || t[1].equalsIgnoreCase("help")) {
             reply("first: .ai start      then just say what you want: .ai get me a diamond pickaxe", ChatFormatting.GRAY);
             reply("also: goto x y z | mine <block> [n] | wander | follow <player> | stop | home | back", ChatFormatting.GRAY);
-            reply(".ai sethome | where | forget | why | talk | menu | list | stopall | debug | off", ChatFormatting.GRAY);
+            reply(".ai vision on/off | sethome | where | forget | why | talk | menu | list | stopall | debug | off", ChatFormatting.GRAY);
             return;
         }
         String first = t[1].toLowerCase(Locale.ROOT);
@@ -99,6 +100,13 @@ public final class AICommand {
                 ai.cancelAll();
                 AIRuntime.stop();
                 reply("AI off - the scanner is stopped and nothing runs in the background. .ai start to turn it on again", ChatFormatting.YELLOW);
+                return;
+            }
+            case "vision" -> {
+                boolean on = t.length >= 3 ? t[2].equalsIgnoreCase("on") : !Vision.enabled();
+                Vision.setEnabled(on);
+                reply(on ? "vision ON - it only knows blocks it has actually seen (rays from its eyes, plus glancing around)"
+                        : "vision OFF - it can read every loaded block, including hidden ones", ChatFormatting.GREEN);
                 return;
             }
             case "debug" -> {
@@ -123,12 +131,8 @@ public final class AICommand {
             }
             case "menu" -> {
                 NullUI ui = NullClient.get().ui();
-                if (ui.status().startsWith("FAILED")) {
-                    reply("menu unavailable: ImGui " + ui.status(), ChatFormatting.RED);
-                    return;
-                }
                 ui.requestToggle();
-                reply("toggling the menu (close it with ESC or NullClient > Close menu)", ChatFormatting.GRAY);
+                reply("toggling the menu (close it with ESC)", ChatFormatting.GRAY);
                 return;
             }
             case "stopall" -> {
@@ -182,7 +186,7 @@ public final class AICommand {
         }
 
         if (profiles.store().isLocked()) {
-            throw new IllegalStateException("profile store is locked; unlock it in the UI first");
+            throw new IllegalStateException("profile store is locked; unlock it in the menu first");
         }
         if (first.equals("profiles")) {
             if (profiles.all().isEmpty()) {
@@ -258,7 +262,7 @@ public final class AICommand {
                     : "nothing to go back to yet - start a task first");
         }
         if (profiles.store().isLocked()) {
-            throw new IllegalStateException("profile store is locked; unlock it in the UI first");
+            throw new IllegalStateException("profile store is locked; unlock it in the menu first");
         }
         Profile profile = defaultProfile();
         AIMemory.INSTANCE.setBack(lv, p.blockPosition());
@@ -300,9 +304,7 @@ public final class AICommand {
         reply("NullClient build " + build + " on minecraft " + mc, ChatFormatting.GRAY);
         reply("AI engine: " + (AIRuntime.started() ? "ON" : "OFF (type .ai start)"),
                 AIRuntime.started() ? ChatFormatting.GREEN : ChatFormatting.YELLOW);
-        NullUI ui = NullClient.get().ui();
-        reply("menu: " + ui.status() + ", frame hook " + (InputOverride.uiHookRan ? "running" : "NOT running"),
-                InputOverride.uiHookRan && !ui.status().startsWith("FAILED") ? ChatFormatting.GREEN : ChatFormatting.RED);
+        reply("vision: " + (Vision.enabled() ? "ON, " + Vision.size() + " blocks seen so far" : "OFF (reads all loaded blocks)"), ChatFormatting.GRAY);
         reply("movement: " + (InputOverride.velocityMode() ? "DIRECT (keys did not move you)" : "key presses")
                 + (InputOverride.driving() ? ", driving now" : ", idle"), ChatFormatting.GRAY);
         Profile a = profiles.active();

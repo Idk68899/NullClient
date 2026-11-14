@@ -1,15 +1,14 @@
 package dev.nullclient.ui;
 
 import dev.nullclient.NullClient;
+import dev.nullclient.gui.Join;
+import dev.nullclient.gui.MenuScreen;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
 
-/**
- * Opens and closes the menu (a normal Minecraft screen, see {@link NullScreen}) and handles the hotkeys.
- * The old ImGui overlay is no longer used: nothing here touches ImGui or OpenGL.
- */
+/** Opens and closes the menu ({@link MenuScreen}), finishes pending server joins, and handles the hotkeys. */
 public final class NullUI {
     private final NullClient nc;
     private boolean toggleDown;
@@ -20,21 +19,17 @@ public final class NullUI {
         this.nc = nc;
     }
 
-    /** Legacy: the ImGui panels are gone, so there is nothing to list. */
+    /** Legacy: the old ImGui panels are gone, so there is nothing to list. */
     public List<Panel> panels() {
         return List.of();
     }
 
     public String status() {
-        return "vanilla screen (no ImGui)";
+        return "custom drawn menu";
     }
 
     public boolean isMenuOpen() {
-        return Minecraft.getInstance().gui.screen() instanceof NullScreen;
-    }
-
-    private boolean typing() {
-        return Minecraft.getInstance().gui.screen() instanceof NullScreen s && s.typing();
+        return Minecraft.getInstance().gui.screen() instanceof MenuScreen;
     }
 
     /** Opens or closes the menu on the next tick (a chat screen must close first). */
@@ -43,16 +38,17 @@ public final class NullUI {
     }
 
     private void toggleNow(Minecraft mc) {
-        if (mc.gui.screen() instanceof NullScreen) {
+        if (mc.gui.screen() instanceof MenuScreen) {
             mc.gui.setScreen(null);
         } else if (mc.gui.screen() == null) {
-            mc.gui.setScreen(new NullScreen());
+            mc.gui.setScreen(new MenuScreen());
         }
     }
 
     /** RIGHT SHIFT toggles the menu; END is the panic key that stops every agent and macro. */
     public void pollHotkeys(Minecraft mc) {
-        if (pendingToggle && (mc.gui.screen() == null || mc.gui.screen() instanceof NullScreen)) {
+        Join.tick(mc);
+        if (pendingToggle && (mc.gui.screen() == null || mc.gui.screen() instanceof MenuScreen)) {
             pendingToggle = false;
             toggleNow(mc);
         }
@@ -61,7 +57,7 @@ public final class NullUI {
             return;
         }
         boolean toggle = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
-        if (toggle && !toggleDown && !typing()) {
+        if (toggle && !toggleDown && !MenuScreen.typing()) {
             toggleNow(mc);
         }
         toggleDown = toggle;

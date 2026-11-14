@@ -1,6 +1,11 @@
 name: inspect
 on:
+  push:
+    paths:
+      - ".github/workflows/inspect.yml"
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   inspect:
     runs-on: ubuntu-latest
@@ -16,28 +21,41 @@ jobs:
       - run: gradle build --no-daemon || true
       - name: Inspect
         run: |
-          JAR=$(find ~/.gradle -name 'minecraft-merged.jar' | head -1)
-          pub() { javap -public -cp "$JAR" "$1" 2>/dev/null | sed 's/net\.minecraft\.client\.gui\.//g; s/net\.minecraft\.//g; s/java\.lang\.//g; s/java\.util\.//g'; }
-          echo "##### BEGIN-INSPECT"
-          echo "--- GuiGraphicsExtractor"
-          pub net.minecraft.client.gui.GuiGraphicsExtractor | grep -iE 'fill|text|string|blit|sprite|scissor|pose|outline|gradient|image' | head -40
-          echo "--- input package"
-          unzip -l "$JAR" | awk '{print $4}' | grep 'net/minecraft/client/input/' | sed 's#.*/##' | tr '\n' ' '
-          echo
-          pub net.minecraft.client.input.MouseButtonEvent | head -10
-          pub net.minecraft.client.input.KeyEvent | head -10
-          echo "--- Screen events"
-          pub net.minecraft.client.gui.screens.Screen | grep -iE 'mouse|keyPressed|keyReleased|charTyped|extract|font' | head -20
-          echo "--- textures"
-          pub com.mojang.blaze3d.platform.NativeImage | grep -iE 'read\(|NativeImage\(|setPixel|getPixel|getWidth|getHeight|close' | head -12
-          pub net.minecraft.client.renderer.texture.DynamicTexture | head -12
-          pub net.minecraft.client.renderer.texture.TextureManager | grep -iE 'register|release' | head -6
-          pub net.minecraft.resources.Identifier | grep -iE 'fromNamespaceAndPath|parse|Identifier\(' | head -6
-          echo "--- accounts"
-          pub net.minecraft.client.User | head -14
-          pub net.minecraft.client.multiplayer.resolver.ServerAddress | head -8
-          pub net.minecraft.core.UUIDUtil | grep -i offline
-          javap -public -cp "$JAR" net.minecraft.client.Minecraft | grep -iE 'getCurrentServer|getTextureManager|font;' | head -5
-          pub net.minecraft.client.gui.Font | grep -iE ' width\(|lineHeight|plainSubstr' | head -6
-          echo "##### END-INSPECT"
-          exit 0
+          JAR=$(find ~/.gradle -name 'minecraft-merged-deobf-26.2.jar' | head -1)
+          [ -z "$JAR" ] && JAR=$(find ~/.gradle -name 'minecraft-merged.jar' | head -1)
+          pub() { javap -public -cp "$JAR" "$1" 2>/dev/null | grep -v '^Compiled from' | sed -E 's/net\.minecraft\.client\.gui\.//g; s/net\.minecraft\.//g; s/java\.lang\.//g; s/java\.util\.//g'; }
+          {
+            echo "inspect of $JAR"
+            printf '%s\n' '```'
+            echo "--- GuiGraphicsExtractor (drawing)"
+            pub net.minecraft.client.gui.GuiGraphicsExtractor | grep -iE 'fill|text|string|blit|sprite|scissor|outline|gradient|image|pose|centered' | head -60
+            echo "--- Font"
+            pub net.minecraft.client.gui.Font | grep -iE 'width|lineHeight|plainSubstr|split' | head -12
+            echo "--- RenderPipelines"
+            pub net.minecraft.client.renderer.RenderPipelines | grep -iE 'GUI' | head -8
+            echo "--- input package"
+            unzip -l "$JAR" | awk '{print $4}' | grep 'net/minecraft/client/input/' | sed 's#.*/##' | tr '\n' ' '
+            echo
+            pub net.minecraft.client.input.MouseButtonEvent | head -12
+            pub net.minecraft.client.input.KeyEvent | head -12
+            pub net.minecraft.client.input.CharacterEvent | head -8
+            echo "--- Screen events"
+            pub net.minecraft.client.gui.screens.Screen | grep -iE 'mouse|key|char|extract|scroll|font|added|removed|tick' | head -40
+            echo "--- textures"
+            pub com.mojang.blaze3d.platform.NativeImage | grep -iE 'read\(|NativeImage\(|setPixel|getPixel|getWidth|getHeight|close' | head -14
+            pub net.minecraft.client.renderer.texture.DynamicTexture | head -14
+            pub net.minecraft.client.renderer.texture.TextureManager | grep -iE 'register|release' | head -8
+            pub net.minecraft.resources.Identifier | grep -iE 'fromNamespaceAndPath|parse|Identifier\(' | head -8
+            echo "--- accounts and joining"
+            pub net.minecraft.client.User | head -16
+            pub net.minecraft.client.multiplayer.resolver.ServerAddress | head -10
+            pub net.minecraft.core.UUIDUtil | grep -i offline
+            javap -public -cp "$JAR" net.minecraft.client.Minecraft | grep -iE 'getCurrentServer|getTextureManager|font;|getConnection' | head -6
+            printf '%s\n' '```'
+          } > inspect.txt
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "inspect-${{ github.run_number }}" --title "inspect ${{ github.run_number }}" \
+            --notes-file inspect.txt --target "${{ github.sha }}"

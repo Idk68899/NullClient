@@ -16,19 +16,28 @@ jobs:
       - run: gradle build --no-daemon || true
       - name: Inspect
         run: |
-          for JAR in $(find ~/.gradle -name '*.jar' -size +20M | grep -i minecraft); do
-            if unzip -l "$JAR" | grep -q 'com/mojang/blaze3d/platform/Window.class'; then
-              echo "##### BEGIN-INSPECT $JAR"
-              show() { for F in $(unzip -l "$JAR" | awk '{print $4}' | grep -E "$1" | head -${2:-2}); do CLS=$(echo "$F" | sed 's/\.class$//; s#/#.#g'); echo "--- $CLS"; javap -public -cp "$JAR" "$CLS" | head -${3:-45}; done; }
-              show 'net/minecraft/client/gui/Gui[A-Za-z]*Graphics[A-Za-z]*\.class$' 2 55
-              show 'com/mojang/blaze3d/platform/NativeImage\.class$' 1 30
-              show 'net/minecraft/client/renderer/texture/(DynamicTexture|TextureManager)\.class$' 2 25
-              show 'net/minecraft/client/User\.class$' 1 20
-              show 'net/minecraft/client/gui/screens/ConnectScreen\.class$' 1 20
-              show 'net/minecraft/client/multiplayer/(ServerData|resolver/ServerAddress)\.class$' 2 25
-              echo "--- Minecraft user/session members"
-              javap -public -cp "$JAR" net.minecraft.client.Minecraft | grep -iE 'user|session' | head -10
-              echo "##### END-INSPECT"
-            fi
-          done
+          JAR=$(find ~/.gradle -name 'minecraft-merged.jar' | head -1)
+          pub() { javap -public -cp "$JAR" "$1" 2>/dev/null | sed 's/net\.minecraft\.client\.gui\.//g; s/net\.minecraft\.//g; s/java\.lang\.//g; s/java\.util\.//g'; }
+          echo "##### BEGIN-INSPECT"
+          echo "--- GuiGraphicsExtractor"
+          pub net.minecraft.client.gui.GuiGraphicsExtractor | grep -iE 'fill|text|string|blit|sprite|scissor|pose|outline|gradient|image' | head -40
+          echo "--- input package"
+          unzip -l "$JAR" | awk '{print $4}' | grep 'net/minecraft/client/input/' | sed 's#.*/##' | tr '\n' ' '
+          echo
+          pub net.minecraft.client.input.MouseButtonEvent | head -10
+          pub net.minecraft.client.input.KeyEvent | head -10
+          echo "--- Screen events"
+          pub net.minecraft.client.gui.screens.Screen | grep -iE 'mouse|keyPressed|keyReleased|charTyped|extract|font' | head -20
+          echo "--- textures"
+          pub com.mojang.blaze3d.platform.NativeImage | grep -iE 'read\(|NativeImage\(|setPixel|getPixel|getWidth|getHeight|close' | head -12
+          pub net.minecraft.client.renderer.texture.DynamicTexture | head -12
+          pub net.minecraft.client.renderer.texture.TextureManager | grep -iE 'register|release' | head -6
+          pub net.minecraft.resources.Identifier | grep -iE 'fromNamespaceAndPath|parse|Identifier\(' | head -6
+          echo "--- accounts"
+          pub net.minecraft.client.User | head -14
+          pub net.minecraft.client.multiplayer.resolver.ServerAddress | head -8
+          pub net.minecraft.core.UUIDUtil | grep -i offline
+          javap -public -cp "$JAR" net.minecraft.client.Minecraft | grep -iE 'getCurrentServer|getTextureManager|font;' | head -5
+          pub net.minecraft.client.gui.Font | grep -iE ' width\(|lineHeight|plainSubstr' | head -6
+          echo "##### END-INSPECT"
           exit 0

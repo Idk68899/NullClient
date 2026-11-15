@@ -10,6 +10,9 @@ public final class Profile {
     public long createdAt = System.currentTimeMillis();
     public long lastUsedAt;
 
+    /** "cracked" (typed username) or "generated" (random name). Shown in the Accounts list. */
+    public String kind = "cracked";
+
     /** Server password used by auto login/register. Encrypted at rest when a master password is set. */
     public String password = "";
     public boolean autoLogin;

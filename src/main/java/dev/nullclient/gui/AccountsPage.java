@@ -5,16 +5,23 @@ import dev.nullclient.core.session.Profile;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
 
+import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Offline accounts (just a username): add, select, delete, switch to, and join a server as. */
+/** Offline accounts: manage them, save a server password for auto login, and join a server as one. */
 final class AccountsPage implements Page {
+    private static final String[] MODES = {"Accounts", "Auto login", "Join"};
+
     private final Field name = new Field(24).hint("username");
-    private final Field pass = new Field(128).hint("master password");
+    private final Field unlock = new Field(128).hint("master password").masked();
+    private final Field master = new Field(128).hint("new master password (8+)").masked();
+    private final Field acctPass = new Field(64).hint("server password").masked();
     private final Field ip = new Field(80).hint("server ip");
+    private int mode;
     private int pageIdx;
     private String note = "";
+    private String syncedId = "";
 
     @Override
     public String title() {
@@ -25,23 +32,37 @@ final class AccountsPage implements Page {
     public void draw(Ui ui, int x, int y, int w, int h) {
         NullClient c = Ui.nc();
         Minecraft mc = Minecraft.getInstance();
-        ui.text("Playing as: " + mc.getUser().getName(), x, y, Theme.accent());
+        ui.label("Playing as: " + mc.getUser().getName(), x, y, w, Theme.accent());
         y += 14;
+        int third = (w - 8) / 3;
+        for (int i = 0; i < MODES.length; i++) {
+            int m = i;
+            ui.button((i == mode ? "> " : "") + MODES[i], x + i * (third + 4), y, third, 18, () -> mode = m);
+        }
+        y += 24;
         if (c.store().isLocked()) {
             ui.text("Profile store is locked. Enter the master password:", x, y, Theme.WARN);
             y += 14;
-            ui.field(pass, x, y, w - 64, 20);
+            ui.field(unlock, x, y, w - 64, 20);
             ui.button("Unlock", x + w - 60, y, 60, 20, () -> {
-                note = c.store().unlock(pass.text.toCharArray()) ? "unlocked" : "wrong password";
-                pass.text = "";
+                note = c.store().unlock(unlock.text.toCharArray()) ? "unlocked" : "wrong password";
+                unlock.text = "";
             });
             y += 26;
             ui.label(note, x, y, w, Theme.MUTED);
             return;
         }
+        switch (mode) {
+            case 0 -> accounts(ui, c, x, y, w);
+            case 1 -> autoLogin(ui, c, x, y, w);
+            default -> join(ui, c, mc, x, y, w);
+        }
+    }
+
+    private void accounts(Ui ui, NullClient c, int x, int y, int w) {
         List<Profile> list = new ArrayList<>(c.profiles().all());
         Profile active = c.profiles().active();
-        int per = 4;
+        int per = 3;
         int pages = Math.max(1, (list.size() + per - 1) / per);
         pageIdx = Math.max(0, Math.min(pageIdx, pages - 1));
         if (list.isEmpty()) {
@@ -50,7 +71,7 @@ final class AccountsPage implements Page {
         }
         for (int i = pageIdx * per; i < Math.min(list.size(), (pageIdx + 1) * per); i++) {
             Profile p = list.get(i);
-            ui.button((p == active ? "[x] " : "[ ] ") + p.name, x, y, w - 26, 18, () -> {
+            ui.button((p == active ? "[x] " : "[ ] ") + p.name + (p.autoLogin ? "  (auto login)" : ""), x, y, w - 26, 18, () -> {
                 c.profiles().setActive(p);
                 note = "selected " + p.name;
             });
@@ -84,8 +105,71 @@ final class AccountsPage implements Page {
             note = "generated " + p.name;
         });
         y += 28;
-        ui.field(ip, x, y, w, 20);
+        ui.label(note, x, y, w, Theme.MUTED);
+    }
+
+    private void autoLogin(Ui ui, NullClient c, int x, int y, int w) {
+        Profile cur = c.profiles().active();
+        if (cur == null) {
+            ui.text("Select an account first (Accounts view).", x, y, Theme.MUTED);
+            return;
+        }
+        if (!cur.id.equals(syncedId)) {
+            acctPass.text = cur.password;
+            syncedId = cur.id;
+        }
+        ui.text("Server password for " + cur.name + ":", x, y, Theme.TEXT);
+        y += 12;
+        ui.field(acctPass, x, y, w - 54, 20);
+        ui.button("Paste", x + w - 50, y, 50, 20, () -> Ui.paste(acctPass));
         y += 24;
+        int third = (w - 8) / 3;
+        ui.button("Save", x, y, third, 20, () -> {
+            cur.password = acctPass.text;
+            c.store().save();
+            note = "saved";
+        });
+        ui.button("Auto: " + (cur.autoLogin ? "ON" : "OFF"), x + third + 4, y, third, 20, () -> {
+            cur.autoLogin = !cur.autoLogin;
+            c.store().save();
+            note = cur.autoLogin ? "will type /login or /register for you" : "you will get a popup instead";
+        });
+        ui.button("Clear", x + 2 * (third + 4), y, third, 20, () -> {
+            cur.password = "";
+            cur.autoLogin = false;
+            acctPass.text = "";
+            c.store().save();
+            note = "cleared";
+        });
+        y += 26;
+        ui.label(c.store().isProtected() ? "Stored encrypted (master password set)."
+                : "Stored as plain text - set a master password below.", x, y, w,
+                c.store().isProtected() ? Theme.GOOD : Theme.WARN);
+        y += 14;
+        if (!c.store().isProtected()) {
+            ui.field(master, x, y, w - 74, 20);
+            ui.button("Encrypt", x + w - 70, y, 70, 20, () -> {
+                if (master.text.length() < 8) {
+                    note = "master password needs 8+ characters";
+                    return;
+                }
+                try {
+                    c.store().setMasterPassword(master.text.toCharArray());
+                    master.text = "";
+                    note = "store encrypted";
+                } catch (GeneralSecurityException e) {
+                    note = "encryption failed: " + e.getMessage();
+                }
+            });
+            y += 24;
+        }
+        ui.label(note, x, y, w, Theme.MUTED);
+    }
+
+    private void join(Ui ui, NullClient c, Minecraft mc, int x, int y, int w) {
+        ui.field(ip, x, y, w - 54, 20);
+        ui.button("Paste", x + w - 50, y, 50, 20, () -> Ui.paste(ip));
+        y += 26;
         int third = (w - 8) / 3;
         ui.button("Use current IP", x, y, third, 20, () -> {
             ServerData sd = mc.getCurrentServer();

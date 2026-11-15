@@ -1,6 +1,7 @@
 package dev.nullclient.ui;
 
 import dev.nullclient.NullClient;
+import dev.nullclient.gui.AutoLogin;
 import dev.nullclient.gui.Join;
 import dev.nullclient.gui.MenuScreen;
 import net.minecraft.client.Minecraft;
@@ -8,7 +9,7 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
 
-/** Opens and closes the menu ({@link MenuScreen}), finishes pending server joins, and handles the hotkeys. */
+/** Opens and closes the menu ({@link MenuScreen}), finishes pending joins, runs auto login, and handles hotkeys. */
 public final class NullUI {
     private final NullClient nc;
     private boolean toggleDown;
@@ -17,6 +18,7 @@ public final class NullUI {
 
     public NullUI(NullClient nc) {
         this.nc = nc;
+        AutoLogin.register();
     }
 
     /** Legacy: the old ImGui panels are gone, so there is nothing to list. */
@@ -48,6 +50,7 @@ public final class NullUI {
     /** RIGHT SHIFT toggles the menu; END is the panic key that stops every agent and macro. */
     public void pollHotkeys(Minecraft mc) {
         Join.tick(mc);
+        AutoLogin.tick(mc);
         if (pendingToggle && (mc.gui.screen() == null || mc.gui.screen() instanceof MenuScreen)) {
             pendingToggle = false;
             toggleNow(mc);

@@ -10,15 +10,20 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiConsumer;
 
 /**
  * Immediate-mode drawing and input for the menu. Everything is drawn here with plain rectangles, text and
- * pictures; clickable areas are recorded while drawing and used for the next click.
+ * pictures; clickable areas are recorded while drawing (in draw order, so later = on top) and used for the next
+ * click. Supports clipping to a window and dragging driven by polling the mouse button.
  */
 final class Ui {
-    private record Hit(int x, int y, int w, int h, Runnable action) {
+    private record Hit(int x, int y, int w, int h, int[] clip, Runnable action) {
         boolean contains(int px, int py) {
-            return px >= x && px < x + w && py >= y && py < y + h;
+            if (px < x || px >= x + w || py < y || py >= y + h) {
+                return false;
+            }
+            return clip == null || (px >= clip[0] && px < clip[0] + clip[2] && py >= clip[1] && py < clip[1] + clip[3]);
         }
     }
 
@@ -29,6 +34,8 @@ final class Ui {
     private List<Hit> building = new ArrayList<>();
     private List<Hit> live = new ArrayList<>();
     private Field focus;
+    private int[] clip;
+    private BiConsumer<Integer, Integer> drag;
     long frame;
 
     static NullClient nc() {
@@ -59,14 +66,40 @@ final class Ui {
         f.text = c.length() > f.max ? c.substring(0, f.max) : c;
     }
 
+    private static boolean mouseDown() {
+        long w = GLFW.glfwGetCurrentContext();
+        return w != 0L && GLFW.glfwGetMouseButton(w, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
+    }
+
     void begin(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
         this.g = graphics;
         this.font = Minecraft.getInstance().font;
         this.mx = mouseX;
         this.my = mouseY;
+        this.clip = null;
+        if (drag != null) {
+            if (mouseDown()) {
+                drag.accept(mouseX, mouseY);
+            } else {
+                drag = null;
+            }
+        }
         this.live = building;
         this.building = new ArrayList<>();
         this.frame++;
+    }
+
+    int mouseX() {
+        return mx;
+    }
+
+    int mouseY() {
+        return my;
+    }
+
+    /** While the mouse button stays down, calls {@code onMove} with the pointer position each frame. */
+    void startDrag(BiConsumer<Integer, Integer> onMove) {
+        this.drag = onMove;
     }
 
     // ------------------------------------------------------------------ input
@@ -120,6 +153,22 @@ final class Ui {
 
     // ------------------------------------------------------------------ drawing
 
+    /** Draws only inside the rectangle (and ignores clicks outside it) until {@link #unclip()}. */
+    void clip(int x, int y, int w, int h) {
+        this.clip = new int[]{x, y, w, h};
+        g.enableScissor(x, y, x + w, y + h);
+    }
+
+    void unclip() {
+        this.clip = null;
+        g.disableScissor();
+    }
+
+    /** An invisible clickable area (used to swallow clicks and to drag windows). */
+    void area(int x, int y, int w, int h, Runnable action) {
+        building.add(new Hit(x, y, w, h, clip, action));
+    }
+
     boolean hover(int x, int y, int w, int h) {
         return mx >= x && mx < x + w && my >= y && my < y + h;
     }
@@ -165,7 +214,7 @@ final class Ui {
         g.outline(x, y, w, h, hot ? Theme.accent() : 0xFF3A4660);
         String shown = font.plainSubstrByWidth(label, Math.max(8, w - 6));
         g.text(font, shown, x + (w - font.width(shown)) / 2, y + (h - 8) / 2, Theme.TEXT);
-        building.add(new Hit(x, y, w, h, action));
+        building.add(new Hit(x, y, w, h, clip, action));
     }
 
     void field(Field f, int x, int y, int w, int h) {
@@ -182,6 +231,6 @@ final class Ui {
                 g.text(font, "_", x + 4 + font.width(shown), y + (h - 8) / 2, Theme.accent());
             }
         }
-        building.add(new Hit(x, y, w, h, () -> focus = f));
+        building.add(new Hit(x, y, w, h, clip, () -> focus = f));
     }
 }

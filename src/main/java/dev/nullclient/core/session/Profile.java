@@ -10,6 +10,10 @@ public final class Profile {
     public long createdAt = System.currentTimeMillis();
     public long lastUsedAt;
 
+    /** Server password used by auto login/register. Encrypted at rest when a master password is set. */
+    public String password = "";
+    public boolean autoLogin;
+
     public Profile() {
     }
 

@@ -6,13 +6,19 @@ import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.minecraft.client.Minecraft;
 
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Watches server (system) messages for "/login" and "/register" prompts, such as AuthMe's. If the account in use
- * has a saved password and Auto is on, it types the command after a short delay; otherwise it opens a popup.
- * Only server messages are considered, never other players' chat.
+ * Watches server (system) messages for login/register prompts and answers them. It understands /login, /log, /l,
+ * /register and /reg, reads how many password arguments the message shows (for example "/register <password>
+ * <password>"), and types the command after a short delay when the account has a saved password and Auto is on.
+ * If the server wants something it cannot type (an email, a captcha, a code) or no password is saved, it opens a
+ * popup instead. Only server messages are considered, never other players' chat.
  */
 public final class AutoLogin {
+    private static final Pattern CMD = Pattern.compile("/(login|log|l|register|reg)\\b((?:\\s*(?:<[^>]*>|\\[[^\\]]*\\]))*)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern REQUIRED = Pattern.compile("<([^>]*)>");
     private static final long MIN_GAP_MS = 4000L;
     private static final int DELAY_TICKS = 20;
 
@@ -20,8 +26,10 @@ public final class AutoLogin {
     private static Object lastConn;
     private static String pendingKind;
     private static String pendingPassword = "";
+    private static int pendingRepeat = 1;
     private static int delay;
     private static String promptKind;
+    private static int lastRepeat;
     private static long lastSentMs;
     private static boolean failed;
 
@@ -50,20 +58,37 @@ public final class AutoLogin {
 
     static void onMessage(String text) {
         String s = text.toLowerCase(Locale.ROOT);
-        if (s.contains("wrong password") || s.contains("incorrect password") || s.contains("invalid password") || s.contains("wrong pass")) {
+        if (s.contains("wrong password") || s.contains("incorrect password") || s.contains("invalid password")
+                || s.contains("wrong pass") || s.contains("password is incorrect") || s.contains("password is wrong")) {
             failed = true;
             pendingKind = null;
             return;
         }
         if (s.contains("successfully logged") || s.contains("successful login") || s.contains("logged in successfully")
-                || s.contains("successfully registered") || s.contains("successful register")) {
+                || s.contains("successfully registered") || s.contains("successful register") || s.contains("you have been logged")
+                || s.contains("has been registered")) {
             failed = false;
             return;
         }
-        String kind = s.contains("/login") ? "login" : s.contains("/register") ? "register" : null;
-        if (kind == null || pendingKind != null || promptKind != null) {
+        Matcher m = CMD.matcher(text);
+        if (!m.find() || pendingKind != null || promptKind != null) {
             return;
         }
+        String cmd = m.group(1).toLowerCase(Locale.ROOT);
+        String kind = cmd.startsWith("reg") ? "register" : "login";
+        String rest = m.group(2) == null ? "" : m.group(2);
+        int count = 0;
+        boolean odd = s.contains("captcha");
+        Matcher req = REQUIRED.matcher(rest);
+        while (req.find()) {
+            count++;
+            String a = req.group(1).toLowerCase(Locale.ROOT);
+            if (a.contains("mail") || a.contains("captcha") || a.contains("code") || a.contains("2fa")) {
+                odd = true;
+            }
+        }
+        boolean supported = !odd && (kind.equals("login") ? count <= 1 : count <= 2);
+        lastRepeat = count == 0 ? (kind.equals("register") ? 2 : 1) : count;
         if (System.currentTimeMillis() - lastSentMs < MIN_GAP_MS) {
             return;
         }
@@ -72,22 +97,31 @@ public final class AutoLogin {
             return;
         }
         Profile p = current();
-        if (p != null && p.autoLogin && !p.password.isEmpty() && !failed) {
+        if (supported && p != null && p.autoLogin && !p.password.isEmpty() && !failed) {
             pendingKind = kind;
             pendingPassword = p.password;
+            pendingRepeat = lastRepeat;
             delay = DELAY_TICKS;
         } else {
             promptKind = kind;
         }
     }
 
-    /** Sends "/login pw" or "/register pw pw" the same way typing the command would. */
+    /** Sends the command the way the prompt's popup would: "/login pw" or "/register pw pw". */
     static void send(String kind, String password) {
+        send(kind, password, lastRepeat > 0 ? lastRepeat : (kind.equals("register") ? 2 : 1));
+    }
+
+    static void send(String kind, String password, int repeat) {
         var conn = Minecraft.getInstance().getConnection();
         if (conn == null || password.isEmpty()) {
             return;
         }
-        conn.sendCommand(kind + " " + password + (kind.equals("register") ? " " + password : ""));
+        StringBuilder sb = new StringBuilder(kind);
+        for (int i = 0; i < Math.max(1, repeat); i++) {
+            sb.append(' ').append(password);
+        }
+        conn.sendCommand(sb.toString());
         lastSentMs = System.currentTimeMillis();
     }
 
@@ -105,10 +139,11 @@ public final class AutoLogin {
         if (pendingKind != null && --delay <= 0) {
             String kind = pendingKind;
             String pw = pendingPassword;
+            int repeat = pendingRepeat;
             pendingKind = null;
             pendingPassword = "";
             if (mc.player != null) {
-                send(kind, pw);
+                send(kind, pw, repeat);
             }
         }
         if (promptKind != null && mc.player != null && mc.gui.screen() == null) {

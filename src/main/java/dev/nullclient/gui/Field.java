@@ -5,6 +5,7 @@ public final class Field {
     public String text = "";
     public final int max;
     public String hint = "";
+    public boolean mask;
     public Runnable onEnter;
 
     public Field(int max) {
@@ -13,6 +14,12 @@ public final class Field {
 
     public Field hint(String h) {
         this.hint = h;
+        return this;
+    }
+
+    /** Shows stars instead of the typed text (for passwords). */
+    public Field masked() {
+        this.mask = true;
         return this;
     }
 }

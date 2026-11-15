@@ -4,6 +4,7 @@ import dev.nullclient.NullClient;
 import dev.nullclient.gui.AutoLogin;
 import dev.nullclient.gui.Join;
 import dev.nullclient.gui.MenuScreen;
+import dev.nullclient.gui.Pov;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.glfw.GLFW;
 
@@ -51,6 +52,7 @@ public final class NullUI {
     public void pollHotkeys(Minecraft mc) {
         Join.tick(mc);
         AutoLogin.tick(mc);
+        Pov.tick(mc);
         if (pendingToggle && (mc.gui.screen() == null || mc.gui.screen() instanceof MenuScreen)) {
             pendingToggle = false;
             toggleNow(mc);

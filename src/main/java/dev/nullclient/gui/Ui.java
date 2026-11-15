@@ -6,6 +6,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.renderer.RenderPipelines;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +41,22 @@ final class Ui {
         if (c != null) {
             c.bus().post(new Events.ChatSend(".ai " + text));
         }
+    }
+
+    /** Text from the system clipboard (empty if unavailable). */
+    static String clipboard() {
+        try {
+            long w = GLFW.glfwGetCurrentContext();
+            String s = w == 0L ? null : GLFW.glfwGetClipboardString(w);
+            return s == null ? "" : s.replace("\r", "").replace("\n", "").trim();
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    static void paste(Field f) {
+        String c = clipboard();
+        f.text = c.length() > f.max ? c.substring(0, f.max) : c;
     }
 
     void begin(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
@@ -155,7 +172,8 @@ final class Ui {
         boolean has = focus == f;
         fill(x, y, w, h, 0xCC0A0F1A);
         g.outline(x, y, w, h, has ? Theme.accent() : 0xFF3A4660);
-        String shown = font.plainSubstrByWidth(f.text, w - 8, true);
+        String raw = f.mask ? "*".repeat(f.text.length()) : f.text;
+        String shown = font.plainSubstrByWidth(raw, w - 8, true);
         if (f.text.isEmpty() && !has) {
             g.text(font, font.plainSubstrByWidth(f.hint, w - 8), x + 4, y + (h - 8) / 2, Theme.MUTED);
         } else {

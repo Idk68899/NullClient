@@ -1,3 +1,4 @@
+
 package dev.nullclient.ai.task;
 
 import dev.nullclient.ai.AIKeys;
@@ -31,7 +32,8 @@ import java.util.function.Predicate;
  * Crafting table and furnace handling: find one nearby, place one from the inventory, walk to it, open it.
  *
  * <p>Placing picks a spot at least a block away from the player (a player standing in the cell blocks placement),
- * looks at it, clicks, and tries the next spot every {@value #CELL_PATIENCE} ticks if nothing appeared.
+ * looks at it, clicks, and tries the next spot every {@value #CELL_PATIENCE} ticks if nothing appeared. If there is no
+ * free spot at all, it breaks a nearby solid block and places the station in the gap.
  */
 public final class Stations {
     private static final double REACH = 4.0;
@@ -49,6 +51,7 @@ public final class Stations {
         bb.set(AIKeys.STEP_TICKS, 0);
         bb.set(AIKeys.STATION, null);
         bb.set(AIKeys.PLACING, null);
+        bb.set(AIKeys.PREP_BREAK, null);
         bb.set(AIKeys.EXPECT, null);
         return Status.SUCCESS;
     }
@@ -109,6 +112,35 @@ public final class Stations {
         return valid.get(skip % valid.size());
     }
 
+    /** A solid, safe-to-break block next to the player whose floor can hold a station once it is gone. */
+    private static BlockPos breakableNeighbor(ClientLevel level, LocalPlayer p) {
+        WorldView view = new WorldView(level);
+        BlockPos o = p.blockPosition();
+        BlockPos best = null;
+        double bd = Double.MAX_VALUE;
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                for (int dy = 0; dy <= 1; dy++) {
+                    BlockPos c = o.offset(dx, dy, dz);
+                    double hd = Math.hypot(c.getX() + 0.5 - p.getX(), c.getZ() + 0.5 - p.getZ());
+                    if (hd < 1.1 || hd > 2.9 || view.digCost(c.getX(), c.getY(), c.getZ()) != 1) {
+                        continue;
+                    }
+                    BlockPos below = c.below();
+                    if (!level.getBlockState(below).isFaceSturdy(level, below, Direction.UP)) {
+                        continue;
+                    }
+                    double d = c.distSqr(o);
+                    if (d < bd) {
+                        bd = d;
+                        best = c;
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
     /** Picks an existing station to walk to, or a spot to place one from the inventory. */
     public static Status findStation(Blackboard bb, String block) {
         LocalPlayer p = bb.get(AIKeys.PLAYER);
@@ -116,6 +148,7 @@ public final class Stations {
         BlockPos origin = p.blockPosition();
         WorldView view = new WorldView(level);
         bb.set(AIKeys.PLACING, null);
+        bb.set(AIKeys.PREP_BREAK, null);
         bb.set(AIKeys.STEP_TICKS, 0);
         for (BlockPos pos : WorldScanner.INSTANCE.find("=" + block, origin, 32, 8)) {
             if (!MineTasks.idOf(level.getBlockState(pos)).equals(block)) {
@@ -133,11 +166,20 @@ public final class Stations {
             return fail(bb, "no " + block + " nearby and none in inventory");
         }
         BlockPos cell = placementCell(level, p, 0);
+        boolean prep = false;
         if (cell == null) {
-            return fail(bb, "no free space to place a " + block + " near " + origin.toShortString());
+            cell = breakableNeighbor(level, p);
+            prep = cell != null;
+            if (prep) {
+                RunLog.add("station: no free spot near " + origin.toShortString() + " - breaking " + cell.toShortString() + " to make room");
+            }
+        }
+        if (cell == null) {
+            return fail(bb, "no free space to place a " + block + " near " + origin.toShortString() + " and nothing safe to break");
         }
         bb.set(AIKeys.STATION, cell);
         bb.set(AIKeys.PLACING, true);
+        bb.set(AIKeys.PREP_BREAK, prep ? Boolean.TRUE : null);
         bb.set(AIKeys.GOAL, origin);
         NavTasks.resetNav(bb);
         return Status.SUCCESS;
@@ -159,8 +201,17 @@ public final class Stations {
         }
         if (MineTasks.idOf(level.getBlockState(st)).equals(block)) {
             bb.set(AIKeys.PLACING, null);
+            bb.set(AIKeys.PREP_BREAK, null);
             bb.set(AIKeys.STEP_TICKS, 0);
             return Status.SUCCESS;
+        }
+        if (bb.getOrDefault(AIKeys.PREP_BREAK, false)) {
+            if (!level.getBlockState(st).getCollisionShape(level, st).isEmpty()) {
+                return Breaker.step(bb, st) == Breaker.Result.FAILED
+                        ? fail(bb, "could not break a block to make room for the " + block)
+                        : Status.RUNNING;
+            }
+            bb.set(AIKeys.PREP_BREAK, null);
         }
         if (!bb.getOrDefault(AIKeys.PLACING, false)) {
             return fail(bb, block + " disappeared");

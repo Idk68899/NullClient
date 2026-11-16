@@ -23,8 +23,8 @@ import java.util.List;
 
 /**
  * A behavior tree bound to one local profile. Drives the local player while that profile is active.
- * The camera eases toward its target angle, in water the agent surfaces for air in time, and spots it gave up on
- * and areas it already explored are remembered (see AIMemory) so it does not repeat itself.
+ * The camera accelerates and decelerates toward its target (a damped spring, no snapping), in water the agent
+ * surfaces for air in time, and spots it gave up on and areas it already explored are remembered (see AIMemory).
  */
 public final class AIAgent {
     public enum State { RUNNING, SUSPENDED, SUCCEEDED, FAILED, CANCELLED }
@@ -33,10 +33,6 @@ public final class AIAgent {
     private static final int SCAN_RADIUS = 96;
     private static final int ROUTE_REPEAT_TICKS = 200;
     private static final int MEMORY_EVERY = 20;
-    private static final float YAW_EASE = 0.35f;
-    private static final float YAW_MAX = 22.0f;
-    private static final float PITCH_EASE = 0.35f;
-    private static final float PITCH_MAX = 12.0f;
 
     private final Profile profile;
     private final String label;
@@ -47,6 +43,8 @@ public final class AIAgent {
     private long ticks;
     private boolean surfacing;
     private boolean wasExploring;
+    private float yawVel;
+    private float pitchVel;
 
     private String seenSpec;
     private BlockPos seenTarget;
@@ -249,12 +247,10 @@ public final class AIAgent {
         wasExploring = exploring;
     }
 
-    /** Eases an angle toward a target: proportional step, capped, snapping when very close. */
-    private static float ease(float current, float diff, float factor, float max) {
-        if (Math.abs(diff) < 1.0f) {
-            return current + diff;
-        }
-        return current + Mth.clamp(diff * factor, -max, max);
+    /** Damped-spring step: accelerate toward the target angle, slow down as it gets close. */
+    private static float steer(float diff, float vel, float maxVel) {
+        float acc = Mth.clamp(diff * 0.20f - vel * 0.50f, -5.0f, 5.0f);
+        return Mth.clamp(vel + acc, -maxVel, maxVel);
     }
 
     /** Runs one tick. Returns the terminal state if the tree finished, otherwise null. */
@@ -298,12 +294,30 @@ public final class AIAgent {
         Float yaw = bb.get(AIKeys.YAW);
         if (yaw != null) {
             float cur = p.getYRot();
-            p.setYRot(ease(cur, Mth.wrapDegrees(yaw - cur), YAW_EASE, YAW_MAX));
+            float diff = Mth.wrapDegrees(yaw - cur);
+            yawVel = steer(diff, yawVel, 28.0f);
+            if (Math.abs(diff) < 0.5f && Math.abs(yawVel) < 0.8f) {
+                p.setYRot(cur + diff);
+                yawVel = 0.0f;
+            } else {
+                p.setYRot(cur + yawVel);
+            }
+        } else {
+            yawVel *= 0.5f;
         }
         Float pitch = bb.get(AIKeys.PITCH);
         if (pitch != null) {
             float cur = p.getXRot();
-            p.setXRot(Mth.clamp(ease(cur, pitch - cur, PITCH_EASE, PITCH_MAX), -90.0f, 90.0f));
+            float diff = pitch - cur;
+            pitchVel = steer(diff, pitchVel, 16.0f);
+            if (Math.abs(diff) < 0.5f && Math.abs(pitchVel) < 0.8f) {
+                p.setXRot(Mth.clamp(cur + diff, -90.0f, 90.0f));
+                pitchVel = 0.0f;
+            } else {
+                p.setXRot(Mth.clamp(cur + pitchVel, -90.0f, 90.0f));
+            }
+        } else {
+            pitchVel *= 0.5f;
         }
 
         if (Say.verbose) {

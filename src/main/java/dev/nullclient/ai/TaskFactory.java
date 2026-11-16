@@ -5,7 +5,9 @@ import dev.nullclient.ai.plan.GoalNode;
 import dev.nullclient.ai.plan.Inv;
 import dev.nullclient.ai.plan.Planner;
 import dev.nullclient.ai.plan.Step;
+import dev.nullclient.ai.task.Guarded;
 import dev.nullclient.ai.task.MineTasks;
+import dev.nullclient.ai.task.Modes;
 import dev.nullclient.ai.task.NavTasks;
 import dev.nullclient.ai.task.Watched;
 import dev.nullclient.core.session.Profile;
@@ -18,7 +20,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/** Parses task strings into agents. goto, get and mine run inside a stuck watchdog. */
+/** Parses task strings into agents. goto, get and mine run inside the safety guard and the stuck watchdog. */
 public final class TaskFactory {
     public static final String USAGE = "get <item> [count] | plan <item> [count] | goto <x> <y> <z> | mine <block> [count] | wander [radius] | follow <player> | stop";
 
@@ -39,14 +41,22 @@ public final class TaskFactory {
                 if (args.length != 4) {
                     throw new IllegalArgumentException("usage: goto <x> <y> <z>  (~ for relative)");
                 }
+                String blocked = Modes.blocker();
+                if (blocked != null) {
+                    throw new IllegalStateException(blocked);
+                }
                 BlockPos goal = new BlockPos(coord(args[1], p.getX()), coord(args[2], p.getY()), coord(args[3], p.getZ()));
                 bb.set(AIKeys.GOAL, goal);
                 return new AIAgent(profile, "goto " + goal.getX() + " " + goal.getY() + " " + goal.getZ(),
-                        new Watched(NavTasks.gotoTree()), bb);
+                        new Watched(new Guarded(NavTasks.gotoTree())), bb);
             }
             case "get": {
                 if (args.length < 2 || args.length > 3) {
                     throw new IllegalArgumentException("usage: get <item> [count]  e.g. get iron_pickaxe");
+                }
+                String blocked = Modes.blockerForBlocks();
+                if (blocked != null) {
+                    throw new IllegalStateException(blocked);
                 }
                 String item = args[1].toLowerCase(Locale.ROOT).replace("minecraft:", "");
                 int count = args.length == 3 ? Integer.parseInt(args[2]) : 1;
@@ -58,11 +68,15 @@ public final class TaskFactory {
                 } catch (Planner.PlanException e) {
                     throw new IllegalArgumentException(e.getMessage());
                 }
-                return new AIAgent(profile, "get " + item + " x" + count, new Watched(new GoalNode(item, count)), bb);
+                return new AIAgent(profile, "get " + item + " x" + count, new Watched(new Guarded(new GoalNode(item, count))), bb);
             }
             case "mine": {
                 if (args.length < 2 || args.length > 3) {
                     throw new IllegalArgumentException("usage: mine <block> [count]  e.g. mine oak_log 8");
+                }
+                String blocked = Modes.blockerForBlocks();
+                if (blocked != null) {
+                    throw new IllegalStateException(blocked);
                 }
                 String block = args[1].toLowerCase(Locale.ROOT).replace("minecraft:", "");
                 int count = args.length == 3 ? Integer.parseInt(args[2]) : 1;
@@ -72,7 +86,7 @@ public final class TaskFactory {
                 bb.set(AIKeys.MINE_BLOCK, block);
                 bb.set(AIKeys.MINE_COUNT, count);
                 bb.set(AIKeys.MINED, 0);
-                return new AIAgent(profile, "mine " + block + " x" + count, new Watched(MineTasks.mineTree()), bb);
+                return new AIAgent(profile, "mine " + block + " x" + count, new Watched(new Guarded(MineTasks.mineTree())), bb);
             }
             case "wander": {
                 int radius = args.length >= 2 ? Integer.parseInt(args[1]) : 16;

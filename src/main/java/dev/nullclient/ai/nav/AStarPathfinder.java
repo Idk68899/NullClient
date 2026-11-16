@@ -13,12 +13,12 @@ import java.util.Set;
 /**
  * Incremental A* over block-grid player positions (feet cell).
  *
- * <p>Move set: walk, diagonal, step-up, descend (up to {@value #MAX_FALL} blocks), parkour jumps (2-4 blocks),
- * swim up/down inside water, and, when allowed, DIG_WALK / DIG_DOWN / DIG_UP moves that tunnel through safe
- * solid blocks plus PILLAR (jump and place a block underneath to climb). Pillar moves can be chained: a cell
- * reached by pillaring counts as having a floor, because the block will be there once it is placed.
- * In dig mode the heuristic is weighted so tunnels head almost straight for the goal. When the node budget
- * runs out the search yields a partial path to the closest explored node.
+ * <p>Move set: walk, diagonal, step-up, descend (up to {@link Search#maxFall(int)} blocks, default
+ * {@value #MAX_FALL}; drops beyond 3 cost extra), parkour jumps (2-4 blocks), swim up/down inside water, and, when
+ * allowed, DIG_WALK / DIG_DOWN / DIG_UP moves that tunnel through safe solid blocks plus PILLAR (jump and place a
+ * block underneath to climb). Pillar moves can be chained: a cell reached by pillaring counts as having a floor.
+ * In dig mode the heuristic is weighted so tunnels head almost straight for the goal. When the node budget runs
+ * out the search yields a partial path to the closest explored node.
  */
 public final class AStarPathfinder {
     public static final int MAX_FALL = 3;
@@ -37,6 +37,7 @@ public final class AStarPathfinder {
         private static final double DIG_HEURISTIC_WEIGHT = 3.0;
         private static final double WATER_EXTRA = 0.6;
         private static final double PILLAR_COST = 5.0;
+        private static final double LONG_FALL_COST = 2.0;
 
         private final WorldView v;
         private final boolean allowDig;
@@ -50,6 +51,7 @@ public final class AStarPathfinder {
         private final Long2ObjectOpenHashMap<PathNode> best = new Long2ObjectOpenHashMap<>();
         private final Set<PathNode> closed = Collections.newSetFromMap(new IdentityHashMap<>());
 
+        private int maxFall = MAX_FALL;
         private int expansions;
         private PathNode closest;
         private PathNode found;
@@ -76,6 +78,12 @@ public final class AStarPathfinder {
             this.closest = start;
             best.put(BlockPos.asLong(start.x, start.y, start.z), start);
             open.add(start);
+        }
+
+        /** The longest drop (in blocks) the search may plan; call before stepping. */
+        public Search maxFall(int blocks) {
+            this.maxFall = Math.max(MAX_FALL, blocks);
+            return this;
         }
 
         public State state() {
@@ -205,9 +213,10 @@ public final class AStarPathfinder {
                         offer(n, nx, y + 1, nz, MoveType.STEP_UP, 2.0);
                     }
                 } else if (v.bodyFree(nx, y + 1, nz)) {
-                    for (int k = 1; k <= MAX_FALL; k++) {
+                    for (int k = 1; k <= maxFall; k++) {
                         if (v.canStand(nx, y - k, nz)) {
-                            offer(n, nx, y - k, nz, MoveType.DESCEND, 1.3 + 0.5 * k);
+                            double cost = 1.3 + 0.5 * k + (k > MAX_FALL ? (k - MAX_FALL) * LONG_FALL_COST : 0.0);
+                            offer(n, nx, y - k, nz, MoveType.DESCEND, cost);
                             break;
                         }
                         if (!v.bodyFree(nx, y - k, nz)) {

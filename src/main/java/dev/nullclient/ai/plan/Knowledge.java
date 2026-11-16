@@ -12,11 +12,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Data-driven game knowledge loaded from knowledge.json: tags, gather sources, recipes, smelting, fuel. */
+/** Data-driven game knowledge loaded from knowledge.json: tags, gather sources (blocks or mobs), recipes, smelting, fuel. */
 public final class Knowledge {
     public static final class Gather {
         public String item;
         public List<String> blocks = List.of();
+        public List<String> mobs = List.of();
         public List<String> tool = List.of();
         public double chance = 1.0;
         public boolean scan;

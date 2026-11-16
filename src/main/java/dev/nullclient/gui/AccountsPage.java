@@ -11,12 +11,14 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Account manager. Accounts tab: add/generate/search/login/edit/delete offline accounts. Setup tab: saved servers
- * with a name, address, Use Current and Join. Login tab: server password and auto login for the selected account.
+ * Account manager. Accounts tab: add/generate/search/login/edit/delete offline accounts in a scrollable list.
+ * Setup tab: saved servers with a name, address, Use Current and Join. Login tab: server password and auto login
+ * for the selected account.
  */
 final class AccountsPage implements Page {
     private static final String[] TABS = {"Accounts", "Setup", "Login"};
     private static final String[] ADD = {"Cracked", "Generated"};
+    private static final int ROW_H = 22;
 
     private final Field name = new Field(24).hint("Username");
     private final Field search = new Field(24).hint("Search nickname...");
@@ -28,7 +30,7 @@ final class AccountsPage implements Page {
 
     private int tab;
     private int addMode;
-    private int pageIdx;
+    private double scroll;
     private Profile editing;
     private boolean armedClear;
     private Servers.Entry sel;
@@ -47,7 +49,7 @@ final class AccountsPage implements Page {
 
     @Override
     public int height() {
-        return 280;
+        return 290;
     }
 
     @Override
@@ -143,13 +145,8 @@ final class AccountsPage implements Page {
                 list.add(p);
             }
         }
-        int rows = Math.max(2, (bottom - y - 48) / 22);
-        int pages = Math.max(1, (list.size() + rows - 1) / rows);
-        pageIdx = Math.max(0, Math.min(pageIdx, pages - 1));
-        int from = pageIdx * rows;
-        int to = Math.min(list.size(), from + rows);
 
-        ui.label("Accounts  showing " + (list.isEmpty() ? 0 : from + 1) + "-" + to + " / " + list.size(), x, y + 4, w - 150, Theme.TEXT);
+        ui.label("Accounts  (" + list.size() + ")", x, y + 4, w - 150, Theme.TEXT);
         ui.button(armedClear ? "Sure?" : "Clear List", x + w - 148, y, 72, 18, () -> {
             if (!armedClear) {
                 armedClear = true;
@@ -170,52 +167,77 @@ final class AccountsPage implements Page {
         });
         y += 22;
 
+        int listTop = y;
+        int listH = Math.max(ROW_H, bottom - y - 20);
+        int contentH = list.size() * ROW_H;
+        int maxScroll = Math.max(0, contentH - listH);
+        if (ui.hover(x, listTop, w, listH)) {
+            scroll -= ui.scrollDelta() * ROW_H * 2;
+        }
+        scroll = Math.max(0, Math.min(scroll, maxScroll));
+
+        boolean needBar = contentH > listH;
+        int barW = needBar ? 6 : 0;
+        int rowW = w - barW - 2;
+
+        ui.clip(x, listTop, w, listH);
         String playing = mc.getUser().getName();
         Profile active = c.profiles().active();
         int btnArea = 46 + 4 + 20 + 4 + 20;
         int typeW = 64;
-        for (int i = from; i < to; i++) {
-            Profile p = list.get(i);
-            boolean current = p.name.equals(playing);
-            if (current) {
-                ui.fill(x, y, w, 20, 0x4433FF99);
-            } else if (p == active) {
-                ui.fill(x, y, w, 20, 0x33FFFFFF);
-            }
-            ui.label(p.name, x + 4, y + 6, w - btnArea - typeW - 12, current ? Theme.GOOD : Theme.TEXT);
-            ui.label("generated".equals(p.kind) ? "Generated" : "Cracked", x + w - btnArea - typeW, y + 6, typeW, Theme.MUTED);
-            int bx = x + w - btnArea;
-            if (current) {
-                ui.button("Active", bx, y + 1, 46, 18, () -> note = "this is the account you are playing as");
-            } else {
-                ui.button("Login", bx, y + 1, 46, 18, () -> {
-                    c.profiles().setActive(p);
-                    Join.switchAccount(p.name);
-                    note = "now playing as " + p.name + " (applies on your next join)";
+        int ry = listTop - (int) scroll;
+        for (Profile p : list) {
+            if (ry + ROW_H >= listTop && ry < listTop + listH) {
+                boolean current = p.name.equals(playing);
+                if (current) {
+                    ui.fill(x, ry, rowW, 20, 0x4433FF99);
+                } else if (p == active) {
+                    ui.fill(x, ry, rowW, 20, 0x33FFFFFF);
+                }
+                ui.label(p.name, x + 4, ry + 6, rowW - btnArea - typeW - 12, current ? Theme.GOOD : Theme.TEXT);
+                ui.label("generated".equals(p.kind) ? "Generated" : "Cracked", x + rowW - btnArea - typeW, ry + 6, typeW, Theme.MUTED);
+                int bx = x + rowW - btnArea;
+                if (current) {
+                    ui.button("Active", bx, ry + 1, 46, 18, () -> note = "this is the account you are playing as");
+                } else {
+                    ui.button("Login", bx, ry + 1, 46, 18, () -> {
+                        c.profiles().setActive(p);
+                        Join.switchAccount(p.name);
+                        note = "now playing as " + p.name + " (applies on your next join)";
+                    });
+                }
+                ui.button("e", bx + 50, ry + 1, 20, 18, () -> {
+                    editing = p;
+                    addMode = 0;
+                    name.text = p.name;
+                    note = "editing " + p.name;
+                });
+                ui.button("x", bx + 74, ry + 1, 20, 18, () -> {
+                    c.profiles().delete(p);
+                    if (editing == p) {
+                        editing = null;
+                    }
+                    note = "deleted " + p.name;
                 });
             }
-            ui.button("e", bx + 50, y + 1, 20, 18, () -> {
-                editing = p;
-                addMode = 0;
-                name.text = p.name;
-                note = "editing " + p.name;
-            });
-            ui.button("x", bx + 74, y + 1, 20, 18, () -> {
-                c.profiles().delete(p);
-                if (editing == p) {
-                    editing = null;
-                }
-                note = "deleted " + p.name;
-            });
-            y += 22;
+            ry += ROW_H;
         }
         if (list.isEmpty()) {
-            ui.text("No accounts yet - add a username above.", x, y + 2, Theme.MUTED);
+            ui.text("No accounts yet - add a username above.", x, listTop + 2, Theme.MUTED);
         }
-        int py = bottom - 36;
-        ui.button("<", x, py, 22, 16, () -> pageIdx--);
-        ui.text("page " + (pageIdx + 1) + "/" + pages, x + 28, py + 4, Theme.MUTED);
-        ui.button(">", x + 90, py, 22, 16, () -> pageIdx++);
+        ui.unclip();
+
+        if (needBar) {
+            int trackX = x + w - barW;
+            ui.fill(trackX, listTop, barW, listH, 0x33FFFFFF);
+            int thumbH = Math.max(16, (int) ((long) listH * listH / contentH));
+            int thumbY = listTop + (int) ((listH - thumbH) * (scroll / maxScroll));
+            ui.fill(trackX, thumbY, barW, thumbH, Theme.accent());
+            ui.area(trackX - 2, listTop, barW + 4, listH, () -> {
+                scroll = (ui.mouseY() - listTop) / (double) listH * maxScroll;
+                ui.startDrag((px, py) -> scroll = (py - listTop) / (double) listH * maxScroll);
+            });
+        }
         ui.label(note, x, bottom - 16, w, Theme.MUTED);
     }
 

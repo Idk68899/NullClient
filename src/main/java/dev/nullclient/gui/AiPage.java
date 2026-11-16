@@ -5,6 +5,8 @@ import dev.nullclient.ai.AIAgent;
 import dev.nullclient.ai.AIMemory;
 import dev.nullclient.ai.AIRuntime;
 import dev.nullclient.ai.RunLog;
+import dev.nullclient.ai.task.Combat;
+import dev.nullclient.ai.task.Guarded;
 import dev.nullclient.ai.world.Vision;
 import dev.nullclient.ai.world.WorldScanner;
 import net.minecraft.client.Minecraft;
@@ -13,7 +15,7 @@ import net.minecraft.core.BlockPos;
 
 import java.util.List;
 
-/** Start/stop the AI, give it a task, and watch what it is doing. */
+/** Start/stop the AI, give it a task, toggle its safety features, and watch what it is doing. */
 final class AiPage implements Page {
     private final Field task = new Field(120).hint("get me a diamond pickaxe");
     private final String[] status = {"", "", "", "", ""};
@@ -25,6 +27,11 @@ final class AiPage implements Page {
     @Override
     public String title() {
         return "AI";
+    }
+
+    @Override
+    public int height() {
+        return 290;
     }
 
     private void go() {
@@ -67,13 +74,18 @@ final class AiPage implements Page {
     public void draw(Ui ui, int x, int y, int w, int h) {
         boolean on = AIRuntime.started();
         int third = (w - 8) / 3;
+        int half = (w - 4) / 2;
         ui.button(on ? "AI: ON" : "AI: OFF", x, y, third, 20, () -> Ui.cmd(on ? "off" : "start"));
         ui.button("Stop task", x + third + 4, y, third, 20, () -> Ui.cmd("stop"));
         ui.button("Stop all", x + 2 * (third + 4), y, third, 20, () -> Ui.cmd("stopall"));
         y += 26;
         ui.button("Vision: " + (Vision.enabled() ? "ON - only what it sees" : "OFF - reads all blocks"), x, y, w, 20,
                 () -> Ui.cmd("vision " + (Vision.enabled() ? "off" : "on")));
-        y += 26;
+        y += 24;
+        ui.button("Combat: " + (Combat.enabled ? "ON" : "OFF"), x, y, half, 20, () -> Ui.cmd("combat " + (Combat.enabled ? "off" : "on")));
+        ui.button("Leave if player near: " + (Guarded.leaveOnPlayer ? "ON" : "OFF"), x + half + 4, y, half, 20,
+                () -> Ui.cmd("logout " + (Guarded.leaveOnPlayer ? "off" : "on")));
+        y += 28;
         ui.text("Tell it what to do:", x, y, Theme.MUTED);
         y += 12;
         ui.field(task, x, y, w - 54, 20);

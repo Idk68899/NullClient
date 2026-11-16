@@ -64,6 +64,7 @@ public final class AIKeys {
     public static final Key<BlockPos> STATION = Key.of("station", BlockPos.class);
     public static final Key<BlockPos> FURNACE_POS = Key.of("furnacePos", BlockPos.class);
     public static final Key<Boolean> PLACING = Key.of("placing", Boolean.class);
+    public static final Key<Boolean> PREP_BREAK = Key.of("prepBreak", Boolean.class);
     public static final Key<Integer> STEP_TICKS = Key.of("stepTicks", Integer.class);
     public static final Key<Integer> EXPECT = Key.of("expect", Integer.class);
     public static final Key<StepTasks.ClickQueue> CLICKS = Key.of("clicks", StepTasks.ClickQueue.class);

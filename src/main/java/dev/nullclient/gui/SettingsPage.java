@@ -3,7 +3,7 @@ package dev.nullclient.gui;
 import java.util.Arrays;
 import java.util.List;
 
-/** Pictures for the menu (add by web link, or pick from files already in the folder), accent colour, opacity. */
+/** Pictures for the menu (drag in on PC, add by web link, or pick files already in the folder), accent, opacity. */
 final class SettingsPage implements Page {
     private static final String[] KEYS = {"background", "sidebar", "panel", "button"};
     private static final String[] NAMES = {"Background", "Sidebar", "Panels", "Buttons"};
@@ -17,10 +17,20 @@ final class SettingsPage implements Page {
         return "Settings";
     }
 
+    @Override
+    public int width() {
+        return 340;
+    }
+
+    @Override
+    public int height() {
+        return 300;
+    }
+
     private void insert(String key) {
         List<String> files = Pics.list();
         if (files.isEmpty()) {
-            note = "no images yet - download one with the link box";
+            note = "no images yet - add one with the steps above";
             return;
         }
         int idx = files.indexOf(Theme.slot(key));
@@ -31,18 +41,30 @@ final class SettingsPage implements Page {
 
     @Override
     public void draw(Ui ui, int x, int y, int w, int h) {
-        ui.text("Add a picture or GIF from a web link:", x, y, Theme.TEXT);
+        String folder = Pics.dir().toAbsolutePath().toString();
+        ui.text("Add a picture or GIF", x, y, Theme.accent());
         y += 12;
+        ui.label("PC: drag the file onto the game window.", x, y, w, Theme.MUTED);
+        y += 11;
+        ui.label("Phone: copy it into this folder, then Reload:", x, y, w, Theme.MUTED);
+        y += 11;
+        ui.label(folder, x, y, w - 66, Theme.TEXT);
+        ui.button("Copy path", x + w - 62, y - 3, 62, 14, () -> {
+            Ui.copy(folder);
+            note = "folder path copied - paste it into your file manager";
+        });
+        y += 14;
         ui.field(url, x, y, w - 54, 20);
         ui.button("Paste", x + w - 50, y, 50, 20, () -> Ui.paste(url));
         y += 24;
         int half = (w - 4) / 2;
         ui.button("For: " + NAMES[target], x, y, half, 20, () -> target = (target + 1) % KEYS.length);
-        ui.button("Download", x + half + 4, y, half, 20, () -> Pics.download(url.text, KEYS[target]));
+        ui.button("Download link", x + half + 4, y, half, 20, () -> Pics.download(url.text, KEYS[target]));
         y += 24;
         String st = Pics.status();
-        ui.label(st.isEmpty() ? "Use a direct image link, e.g. https://i.imgur.com/xxxx.png" : st, x, y, w,
-                st.startsWith("download failed") ? Theme.BAD : Theme.MUTED);
+        String drop = DropImages.last();
+        String shown = !drop.isEmpty() ? drop : (st.isEmpty() ? "Use a direct image link, e.g. https://i.imgur.com/xxxx.png" : st);
+        ui.label(shown, x, y, w, st.startsWith("download failed") ? Theme.BAD : Theme.MUTED);
         y += 16;
         for (int i = 0; i < KEYS.length; i++) {
             String key = KEYS[i];

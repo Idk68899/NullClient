@@ -1,6 +1,9 @@
 package dev.nullclient.ai;
 
 import dev.nullclient.NullClient;
+import dev.nullclient.ai.task.Combat;
+import dev.nullclient.ai.task.Guarded;
+import dev.nullclient.ai.task.Modes;
 import dev.nullclient.ai.world.Vision;
 import dev.nullclient.ai.world.WorldScanner;
 import dev.nullclient.core.event.Events;
@@ -83,11 +86,15 @@ public final class AICommand {
         return mc.level;
     }
 
+    private static boolean flag(String[] t, boolean current) {
+        return t.length >= 3 ? t[2].equalsIgnoreCase("on") : !current;
+    }
+
     private void handle(String[] t) {
         if (t.length == 1 || t[1].equalsIgnoreCase("help")) {
             reply("first: .ai start      then just say what you want: .ai get me a diamond pickaxe", ChatFormatting.GRAY);
             reply("also: goto x y z | mine <block> [n] | wander | follow <player> | stop | home | back", ChatFormatting.GRAY);
-            reply(".ai vision on/off | sethome | where | forget | why | talk | menu | list | stopall | debug | off", ChatFormatting.GRAY);
+            reply(".ai vision | combat | logout (on/off) | sethome | where | forget | why | talk | menu | stopall | debug | off", ChatFormatting.GRAY);
             return;
         }
         String first = t[1].toLowerCase(Locale.ROOT);
@@ -103,10 +110,22 @@ public final class AICommand {
                 return;
             }
             case "vision" -> {
-                boolean on = t.length >= 3 ? t[2].equalsIgnoreCase("on") : !Vision.enabled();
+                boolean on = flag(t, Vision.enabled());
                 Vision.setEnabled(on);
                 reply(on ? "vision ON - it only knows blocks it has actually seen (rays from its eyes, plus glancing around)"
                         : "vision OFF - it can read every loaded block, including hidden ones", ChatFormatting.GREEN);
+                return;
+            }
+            case "combat" -> {
+                Combat.enabled = flag(t, Combat.enabled);
+                reply(Combat.enabled ? "combat ON - it fights back against mobs that attack or come close (never players)"
+                        : "combat OFF - it will only fight a mob when a hunt task needs its drops", ChatFormatting.GREEN);
+                return;
+            }
+            case "logout" -> {
+                Guarded.leaveOnPlayer = flag(t, Guarded.leaveOnPlayer);
+                reply(Guarded.leaveOnPlayer ? "logout ON - it disconnects if a player who is not one of your accounts comes within 48 blocks"
+                        : "logout OFF", ChatFormatting.GREEN);
                 return;
             }
             case "debug" -> {
@@ -304,7 +323,9 @@ public final class AICommand {
         reply("NullClient build " + build + " on minecraft " + mc, ChatFormatting.GRAY);
         reply("AI engine: " + (AIRuntime.started() ? "ON" : "OFF (type .ai start)"),
                 AIRuntime.started() ? ChatFormatting.GREEN : ChatFormatting.YELLOW);
-        reply("vision: " + (Vision.enabled() ? "ON, " + Vision.size() + " blocks seen so far" : "OFF (reads all loaded blocks)"), ChatFormatting.GRAY);
+        reply("vision: " + (Vision.enabled() ? "ON, " + Vision.size() + " blocks seen so far" : "OFF (reads all loaded blocks)")
+                + "   combat: " + (Combat.enabled ? "ON" : "OFF") + "   logout: " + (Guarded.leaveOnPlayer ? "ON" : "OFF")
+                + "   game mode: " + Modes.type(), ChatFormatting.GRAY);
         reply("movement: " + (InputOverride.velocityMode() ? "DIRECT (keys did not move you)" : "key presses")
                 + (InputOverride.driving() ? ", driving now" : ", idle"), ChatFormatting.GRAY);
         Profile a = profiles.active();

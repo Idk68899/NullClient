@@ -1,3 +1,4 @@
+
 package dev.nullclient.ai;
 
 import dev.nullclient.ai.bt.Blackboard;
@@ -23,8 +24,9 @@ import java.util.List;
 
 /**
  * A behavior tree bound to one local profile. Drives the local player while that profile is active.
- * The camera accelerates and decelerates toward its target (a damped spring, no snapping), in water the agent
- * surfaces for air in time, and spots it gave up on and areas it already explored are remembered (see AIMemory).
+ * The camera follows a critically damped spring toward its target: it accelerates, slows down as it gets close, and
+ * does not overshoot. In water the agent surfaces for air in time, and spots it gave up on and areas it already
+ * explored are remembered (see AIMemory).
  */
 public final class AIAgent {
     public enum State { RUNNING, SUSPENDED, SUCCEEDED, FAILED, CANCELLED }
@@ -33,6 +35,11 @@ public final class AIAgent {
     private static final int SCAN_RADIUS = 96;
     private static final int ROUTE_REPEAT_TICKS = 200;
     private static final int MEMORY_EVERY = 20;
+    private static final float GAIN = 0.22f;
+    private static final float DAMPING = 0.75f;
+    private static final float ACC_MAX = 9.0f;
+    private static final float YAW_MAX_VEL = 38.0f;
+    private static final float PITCH_MAX_VEL = 22.0f;
 
     private final Profile profile;
     private final String label;
@@ -247,9 +254,9 @@ public final class AIAgent {
         wasExploring = exploring;
     }
 
-    /** Damped-spring step: accelerate toward the target angle, slow down as it gets close. */
+    /** Spring step: accelerate toward the target angle, slow down as it gets close. */
     private static float steer(float diff, float vel, float maxVel) {
-        float acc = Mth.clamp(diff * 0.20f - vel * 0.50f, -5.0f, 5.0f);
+        float acc = Mth.clamp(diff * GAIN - vel * DAMPING, -ACC_MAX, ACC_MAX);
         return Mth.clamp(vel + acc, -maxVel, maxVel);
     }
 
@@ -295,7 +302,7 @@ public final class AIAgent {
         if (yaw != null) {
             float cur = p.getYRot();
             float diff = Mth.wrapDegrees(yaw - cur);
-            yawVel = steer(diff, yawVel, 28.0f);
+            yawVel = steer(diff, yawVel, YAW_MAX_VEL);
             if (Math.abs(diff) < 0.5f && Math.abs(yawVel) < 0.8f) {
                 p.setYRot(cur + diff);
                 yawVel = 0.0f;
@@ -309,7 +316,7 @@ public final class AIAgent {
         if (pitch != null) {
             float cur = p.getXRot();
             float diff = pitch - cur;
-            pitchVel = steer(diff, pitchVel, 16.0f);
+            pitchVel = steer(diff, pitchVel, PITCH_MAX_VEL);
             if (Math.abs(diff) < 0.5f && Math.abs(pitchVel) < 0.8f) {
                 p.setXRot(Mth.clamp(cur + diff, -90.0f, 90.0f));
                 pitchVel = 0.0f;

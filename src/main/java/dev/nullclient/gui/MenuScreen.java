@@ -7,6 +7,8 @@ import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import org.lwjgl.glfw.GLFW;
+import org.lwjgl.glfw.GLFWScrollCallback;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,6 +22,9 @@ public final class MenuScreen extends Screen {
     private static final List<Page> PAGES = List.of(new AiPage(), new AccountsPage(), new PovPage(), new ProxyPage(), new MacrosPage(), new SettingsPage());
     private static final Ui UI = new Ui();
     private static final List<Win> WINS = new ArrayList<>();
+
+    private static boolean callbacksInstalled;
+    private static GLFWScrollCallback previousScroll;
 
     private static final class Win {
         final Page page;
@@ -36,6 +41,28 @@ public final class MenuScreen extends Screen {
 
     public MenuScreen() {
         super(Component.literal("NullClient"));
+        installCallbacks();
+    }
+
+    /** Hooks the mouse wheel and file drops once, passing every event on to the game's own handlers too. */
+    private static void installCallbacks() {
+        if (callbacksInstalled) {
+            return;
+        }
+        long window = GLFW.glfwGetCurrentContext();
+        if (window == 0L) {
+            return;
+        }
+        callbacksInstalled = true;
+        previousScroll = GLFW.glfwSetScrollCallback(window, (w, xo, yo) -> {
+            if (Minecraft.getInstance().gui.screen() instanceof MenuScreen) {
+                Ui.onScroll(yo);
+            }
+            if (previousScroll != null) {
+                previousScroll.invoke(w, xo, yo);
+            }
+        });
+        DropImages.install();
     }
 
     @Override
@@ -119,7 +146,7 @@ public final class MenuScreen extends Screen {
         } catch (RuntimeException e) {
             UI.text("error: " + e.getMessage(), x + 8, y + 24, Theme.BAD);
         } finally {
-            UI.unclip();
+            UI.resetClips();
         }
     }
 

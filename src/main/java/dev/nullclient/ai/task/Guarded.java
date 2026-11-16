@@ -13,7 +13,9 @@ import net.minecraft.client.player.LocalPlayer;
 
 /**
  * Wraps a task with safety: game-mode check, optional "leave when a player comes near", survival reflexes
- * (water clutch), mob combat, and eating. Anything it handles takes priority over the task for that tick.
+ * (water clutch), mob combat, and eating. Anything it handles takes priority over the task for that tick. When it
+ * hands control back, the task's old route is thrown away so it plans a fresh one from wherever the player ended up
+ * (the interruption never counts as a failure).
  */
 public final class Guarded implements Node {
     /** When on, disconnects if a player who is not one of your accounts comes within {@value #NEAR} blocks. */
@@ -25,6 +27,7 @@ public final class Guarded implements Node {
     private final Combat combat = new Combat();
     private final Reflexes reflexes = new Reflexes();
     private long tick;
+    private boolean wasBusy;
 
     public Guarded(Node child) {
         this.child = child;
@@ -64,15 +67,27 @@ public final class Guarded implements Node {
             mc.execute(mc::disconnectWithProgressScreen);
             return Status.FAILURE;
         }
+
+        boolean busy = false;
         if (reflexes.clutch(bb, mc, p, level)) {
-            return Status.RUNNING;
-        }
-        if (combat.tick(bb, null)) {
+            busy = true;
+        } else if (combat.tick(bb, null)) {
             reflexes.release(mc);
+            busy = true;
+        } else if (reflexes.eat(mc, p)) {
+            busy = true;
+        }
+        if (busy) {
+            if (!wasBusy) {
+                Breaker.abort(bb);
+                wasBusy = true;
+            }
             return Status.RUNNING;
         }
-        if (reflexes.eat(mc, p)) {
-            return Status.RUNNING;
+        if (wasBusy) {
+            wasBusy = false;
+            NavTasks.resetNav(bb);
+            bb.set(AIKeys.FAIL_REASON, null);
         }
         return child.tick(bb);
     }
@@ -82,6 +97,7 @@ public final class Guarded implements Node {
         child.reset(bb);
         combat.clear();
         reflexes.release(Minecraft.getInstance());
+        wasBusy = false;
     }
 
     @Override

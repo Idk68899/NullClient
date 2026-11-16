@@ -2,21 +2,26 @@ package dev.nullclient.gui;
 
 import net.minecraft.client.Minecraft;
 import org.lwjgl.glfw.GLFW;
-import org.lwjgl.glfw.GLFWDropCallbackI;
+import org.lwjgl.glfw.GLFWDropCallback;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * PC only: lets you drag a PNG or GIF file straight onto the game window to add it to config/nullclient/ui/.
- * Phone launchers have no equivalent (Android's file picker is not reachable from a JVM mod), so there this
- * stays silent and the Settings page points you at the folder instead.
+ * PC only: drag a PNG or GIF file onto the game window while the menu is open and it is copied into
+ * config/nullclient/ui/. Every drop is also passed on to the game's own handler. Phone launchers have no
+ * equivalent (Android's file picker is not reachable from a JVM mod), so there the Settings window points you at
+ * the folder instead.
  */
 public final class DropImages {
+    private static final long MAX_BYTES = 6L * 1024L * 1024L;
     private static final AtomicReference<String> LAST = new AtomicReference<>("");
     private static boolean installed;
+    private static GLFWDropCallback previous;
 
     private DropImages() {
     }
@@ -34,9 +39,14 @@ public final class DropImages {
             return;
         }
         installed = true;
-        GLFW.glfwSetDropCallback(window, (GLFWDropCallbackI) (w, count, names) -> {
-            for (int i = 0; i < count; i++) {
-                handle(org.lwjgl.system.MemoryUtil.memUTF8(org.lwjgl.system.MemoryUtil.memGetAddress(names + (long) i * Long.BYTES)));
+        previous = GLFW.glfwSetDropCallback(window, (w, count, names) -> {
+            if (Minecraft.getInstance().gui.screen() instanceof MenuScreen) {
+                for (int i = 0; i < count; i++) {
+                    handle(GLFWDropCallback.getName(names, i));
+                }
+            }
+            if (previous != null) {
+                previous.invoke(w, count, names);
             }
         });
     }
@@ -44,15 +54,19 @@ public final class DropImages {
     private static void handle(String path) {
         try {
             Path src = Path.of(path);
-            String lower = src.getFileName().toString().toLowerCase(Locale.ROOT);
+            String file = src.getFileName().toString();
+            String lower = file.toLowerCase(Locale.ROOT);
             if (!(lower.endsWith(".png") || lower.endsWith(".gif"))) {
-                LAST.set("ignored " + src.getFileName() + " (only .png and .gif)");
+                LAST.set("ignored " + file + " (only .png and .gif)");
                 return;
             }
-            Path dest = Pics.dir().resolve(src.getFileName());
-            Files.copy(src, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            LAST.set("added " + src.getFileName());
-        } catch (Exception e) {
+            if (Files.size(src) > MAX_BYTES) {
+                LAST.set("ignored " + file + " (bigger than 6 MB)");
+                return;
+            }
+            Files.copy(src, Pics.dir().resolve(file), StandardCopyOption.REPLACE_EXISTING);
+            LAST.set("added " + file + " - tap Reload images, then Next");
+        } catch (IOException | RuntimeException e) {
             LAST.set("could not add that file: " + e.getMessage());
         }
     }

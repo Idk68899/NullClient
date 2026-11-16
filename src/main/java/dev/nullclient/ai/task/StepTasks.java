@@ -27,9 +27,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Turns planner steps into behavior-tree nodes: gather, craft (inventory grid or crafting table), and
- * furnace work split into load (start cooking, then leave) and collect (come back for the output).
- * Station handling (find, place, open) lives in {@link Stations}.
+ * Turns planner steps into behavior-tree nodes: gather (blocks, or hunting mobs), craft (inventory grid or crafting
+ * table), and furnace work split into load (start cooking, then leave) and collect (come back for the output).
+ * Station handling (find, place, open) lives in {@link Stations}; hunting lives in {@link HuntTasks}.
  */
 public final class StepTasks {
     public record Click(int slot, int button, ContainerInput type) {
@@ -63,6 +63,9 @@ public final class StepTasks {
     // ------------------------------------------------------------------ gather
 
     private static Node gather(Step s) {
+        if (!s.gather().mobs.isEmpty()) {
+            return HuntTasks.node(s);
+        }
         Knowledge k = Knowledge.get();
         StringBuilder spec = new StringBuilder();
         for (String b : s.gather().blocks) {

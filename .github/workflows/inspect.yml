@@ -29,38 +29,22 @@ jobs:
           {
             echo "inspect of $JAR"
             printf '%s\n' '```'
-            echo "===== NETWORKING (for sessions)"
-            show Connection 60
-            show ClientIntentionPacket 10
-            show ClientIntent 8
-            show ServerboundHelloPacket 10
-            show ServerboundLoginAcknowledgedPacket 6
-            show ClientLoginPacketListener 24
-            show ClientHandshakePacketListenerImpl 14
-            show ClientCommonPacketListenerImpl 40
-            show ClientConfigurationPacketListener 40
-            show ServerboundFinishConfigurationPacket 6
-            show ServerboundKeepAlivePacket 6
-            show ClientboundKeepAlivePacket 6
-            show ClientboundPingPacket 6
-            show ServerboundPongPacket 6
-            show ServerboundMovePlayerPacket 14
-            show ServerboundChatPacket 6
-            show ServerboundClientInformationPacket 6
-            show LoginProtocols 8
-            show ConfigurationProtocols 8
-            show GameProtocols 12
-            show HandshakeProtocols 8
-            show ProtocolInfo 10
-            show PacketFlow 6
-            show SharedConstants 14
-            echo "--- ClientGamePacketListener method count"
-            c=$(fq ClientGamePacketListener); [ -n "$c" ] && pub "$c" | grep -c 'void handle'
-            echo "===== SKIN AND 3D MODEL (for the skin viewer)"
-            pub net.minecraft.client.gui.GuiGraphicsExtractor | grep -iE 'entity|model|skin|player|pip|picture' | head -12
-            pub net.minecraft.client.gui.screens.inventory.InventoryScreen | grep -iE 'entity|player|follows' | head -8
+            echo "===== SESSION EXTRA"
+            show EventLoopGroupHolder 20
+            show SimpleUnboundProtocol 14
+            show UnboundProtocol 10
+            show RegistryFriendlyByteBuf 14
+            show ClientPacketListener 30
+            show ServerboundSelectKnownPacks 6
+            show ClientboundLoginPacket 8
+            show ClientboundHelloPacket 8
+            show LocalSampleLogger 8
+            c=$(fq ClientGamePacketListener); echo "--- game listener names"; [ -n "$c" ] && pub "$c" | grep -E 'handleLogin|handleRespawn|handlePlayerPosition|handleDisconnect' | head -6
+            echo "===== SKIN AND ICONS"
             show PlayerSkin 14
-            pub net.minecraft.client.player.AbstractClientPlayer | grep -iE 'skin' | head -6
+            show PlayerSkinWidget 10
+            pub net.minecraft.client.gui.screens.inventory.InventoryScreen | grep -iE 'entity|player' | head -6
+            pub net.minecraft.client.gui.GuiGraphicsExtractor | grep -E ' item\(|fakeItem|entity|pip|submit' | head -10
             printf '%s\n' '```'
           } > inspect.txt
       - name: Publish

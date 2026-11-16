@@ -15,6 +15,7 @@ import dev.nullclient.ai.nav.Path;
 import dev.nullclient.ai.nav.PathFollower;
 import dev.nullclient.ai.nav.PathNode;
 import dev.nullclient.ai.nav.WorldView;
+import dev.nullclient.ai.plan.Inv;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.player.LocalPlayer;
@@ -25,8 +26,8 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * Leaf implementations and tree builders for navigation tasks. Route planning first tries plain walking; if
  * there is no walking route (and it is not exploring), it retries once allowing tunnelling and pillaring.
- * Cells where a route failed are remembered and avoided by the next plan. A missing goal never crashes the
- * planner: it stays put and lets the caller decide again.
+ * Cells where a route failed are remembered and avoided by the next plan. The longest drop it will plan depends on
+ * health and whether a water bucket is available (see {@link #fallLimit}). A missing goal never crashes the planner.
  */
 public final class NavTasks {
     private static final int MAX_REPLANS = 12;
@@ -116,6 +117,24 @@ public final class NavTasks {
         return dx * dx + dz * dz <= 0.7 * 0.7 && Math.abs(p.getY() - g.getY()) <= 1.5;
     }
 
+    /** The longest drop the planner may use: unlimited in creative, 20 with a water bucket (the clutch reflex lands it), else by health. */
+    static int fallLimit(LocalPlayer p) {
+        if (Modes.creative()) {
+            return 40;
+        }
+        if (Inv.count(p, "water_bucket") > 0) {
+            return 20;
+        }
+        float hp = p.getHealth();
+        if (hp >= 18.0f) {
+            return 7;
+        }
+        if (hp >= 12.0f) {
+            return 5;
+        }
+        return 3;
+    }
+
     static Status planPath(Blackboard bb) {
         LocalPlayer p = bb.get(AIKeys.PLAYER);
         ClientLevel level = bb.get(AIKeys.LEVEL);
@@ -133,7 +152,7 @@ public final class NavTasks {
             boolean dig = bb.getOrDefault(AIKeys.ALLOW_DIG, false);
             boolean pillar = dig && Placer.count(p) > 0;
             search = new AStarPathfinder.Search(new WorldView(level, bb.get(AIKeys.AVOID)), p.blockPosition(), goal,
-                    dig ? MAX_EXPANSIONS_DIG : MAX_EXPANSIONS, dig, pillar);
+                    dig ? MAX_EXPANSIONS_DIG : MAX_EXPANSIONS, dig, pillar).maxFall(fallLimit(p));
             bb.set(AIKeys.SEARCH, search);
         }
         long end = System.nanoTime() + SEARCH_NANOS;
@@ -156,7 +175,7 @@ public final class NavTasks {
                 if (!bb.getOrDefault(AIKeys.ALLOW_DIG, false) && !bb.getOrDefault(AIKeys.EXPLORING, false)) {
                     bb.set(AIKeys.ALLOW_DIG, true);
                     RunLog.add("no walking route to " + goal.toShortString() + " from " + p.blockPosition().toShortString()
-                            + " - allowing tunnels and pillars");
+                            + " - allowing tunnels and pillars (longest drop " + fallLimit(p) + ")");
                     return Status.RUNNING;
                 }
                 RunLog.add("no route at all to " + goal.toShortString() + " from " + p.blockPosition().toShortString());

@@ -24,9 +24,10 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Fights mobs only, like a player would: aims at the mob with the camera, closes in, and swings only when the
- * attack cooldown is full, the mob is within normal reach, nothing blocks the line, and the aim is on it.
- * Never targets players. No automatic hitting, no extended reach.
+ * Fights mobs only, like a player would: aims at the mob with the camera, closes in, and swings only when its own
+ * swing timer has elapsed (about 13 ticks for a sword, 24 for an axe, 6 bare-handed), the attack cooldown is full,
+ * the mob is within normal reach, nothing blocks the line, and the aim is on it. Never targets players. No
+ * automatic hitting, no extended reach.
  */
 public final class Combat {
     public static volatile boolean enabled = true;
@@ -43,6 +44,7 @@ public final class Combat {
 
     private LivingEntity target;
     private int engaged;
+    private int sinceAttack = 99;
 
     public boolean active() {
         return target != null;
@@ -108,6 +110,19 @@ public final class Combat {
         }
     }
 
+    /** Ticks to wait between swings for the item in hand. */
+    private static int swingGap(LocalPlayer p) {
+        Inventory inv = p.getInventory();
+        String id = Inv.idOf(inv.getItem(inv.getSelectedSlot()));
+        if (id.endsWith("_sword")) {
+            return 13;
+        }
+        if (id.endsWith("_axe")) {
+            return 24;
+        }
+        return 6;
+    }
+
     /**
      * One tick of fighting. With {@code forced} it fights that mob (used when hunting for drops); otherwise only
      * when something threatens us. Returns true if it took control of the player this tick.
@@ -146,6 +161,7 @@ public final class Combat {
     }
 
     private void fight(Blackboard bb, LocalPlayer p, ClientLevel level, Minecraft mc) {
+        sinceAttack++;
         Vec3 eye = p.getEyePosition();
         AABB box = target.getBoundingBox();
         double reach = eye.distanceTo(nearestPoint(eye, box));
@@ -179,9 +195,11 @@ public final class Combat {
         AIKeys.addActions(bb, actions);
 
         boolean aimed = Math.abs(Mth.wrapDegrees(yaw - p.getYRot())) < 9.0f && Math.abs(pitch - p.getXRot()) < 11.0f;
-        if (reach <= REACH && los && aimed && p.getAttackStrengthScale(0.0f) >= 0.95f && mc.gameMode != null) {
+        if (reach <= REACH && los && aimed && mc.gameMode != null
+                && sinceAttack >= swingGap(p) && p.getAttackStrengthScale(0.0f) >= 0.9f) {
             mc.gameMode.attack(p, target);
             p.swing(InteractionHand.MAIN_HAND);
+            sinceAttack = 0;
         }
     }
 }

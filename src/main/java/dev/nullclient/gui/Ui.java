@@ -8,6 +8,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.renderer.RenderPipelines;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiConsumer;
@@ -15,7 +16,7 @@ import java.util.function.BiConsumer;
 /**
  * Immediate-mode drawing and input for the menu. Everything is drawn here with plain rectangles, text and
  * pictures; clickable areas are recorded while drawing (in draw order, so later = on top) and used for the next
- * click. Supports clipping to a window and dragging driven by polling the mouse button.
+ * click. Supports nested clipping, dragging (polls the mouse button) and mouse-wheel scrolling.
  */
 final class Ui {
     private record Hit(int x, int y, int w, int h, int[] clip, Runnable action) {
@@ -27,15 +28,18 @@ final class Ui {
         }
     }
 
+    private static double pendingScroll;
+
     private GuiGraphicsExtractor g;
     private Font font;
     private int mx;
     private int my;
     private List<Hit> building = new ArrayList<>();
     private List<Hit> live = new ArrayList<>();
+    private final ArrayDeque<int[]> clips = new ArrayDeque<>();
     private Field focus;
-    private int[] clip;
     private BiConsumer<Integer, Integer> drag;
+    private double frameScroll;
     long frame;
 
     static NullClient nc() {
@@ -66,6 +70,22 @@ final class Ui {
         f.text = c.length() > f.max ? c.substring(0, f.max) : c;
     }
 
+    static void copy(String text) {
+        try {
+            long w = GLFW.glfwGetCurrentContext();
+            if (w != 0L) {
+                GLFW.glfwSetClipboardString(w, text);
+            }
+        } catch (Throwable ignored) {
+            // no clipboard available
+        }
+    }
+
+    /** Called from the GLFW scroll callback. */
+    static void onScroll(double yOffset) {
+        pendingScroll += yOffset;
+    }
+
     private static boolean mouseDown() {
         long w = GLFW.glfwGetCurrentContext();
         return w != 0L && GLFW.glfwGetMouseButton(w, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
@@ -76,7 +96,9 @@ final class Ui {
         this.font = Minecraft.getInstance().font;
         this.mx = mouseX;
         this.my = mouseY;
-        this.clip = null;
+        this.clips.clear();
+        this.frameScroll = pendingScroll;
+        pendingScroll = 0.0;
         if (drag != null) {
             if (mouseDown()) {
                 drag.accept(mouseX, mouseY);
@@ -95,6 +117,11 @@ final class Ui {
 
     int mouseY() {
         return my;
+    }
+
+    /** Mouse-wheel movement this frame (positive = wheel up). */
+    double scrollDelta() {
+        return frameScroll;
     }
 
     /** While the mouse button stays down, calls {@code onMove} with the pointer position each frame. */
@@ -153,20 +180,40 @@ final class Ui {
 
     // ------------------------------------------------------------------ drawing
 
-    /** Draws only inside the rectangle (and ignores clicks outside it) until {@link #unclip()}. */
+    /** Draws only inside the rectangle (and ignores clicks outside it) until {@link #unclip()}. Calls nest. */
     void clip(int x, int y, int w, int h) {
-        this.clip = new int[]{x, y, w, h};
+        int x0 = x;
+        int y0 = y;
+        int x1 = x + w;
+        int y1 = y + h;
+        int[] top = clips.peek();
+        if (top != null) {
+            x0 = Math.max(x0, top[0]);
+            y0 = Math.max(y0, top[1]);
+            x1 = Math.min(x1, top[0] + top[2]);
+            y1 = Math.min(y1, top[1] + top[3]);
+        }
+        clips.push(new int[]{x0, y0, Math.max(0, x1 - x0), Math.max(0, y1 - y0)});
         g.enableScissor(x, y, x + w, y + h);
     }
 
     void unclip() {
-        this.clip = null;
-        g.disableScissor();
+        if (!clips.isEmpty()) {
+            clips.pop();
+            g.disableScissor();
+        }
     }
 
-    /** An invisible clickable area (used to swallow clicks and to drag windows). */
+    /** Pops every clip still open (used after a page draws, even if it threw an error). */
+    void resetClips() {
+        while (!clips.isEmpty()) {
+            unclip();
+        }
+    }
+
+    /** An invisible clickable area (used to swallow clicks, drag windows, and drag scrollbars). */
     void area(int x, int y, int w, int h, Runnable action) {
-        building.add(new Hit(x, y, w, h, clip, action));
+        building.add(new Hit(x, y, w, h, clips.peek(), action));
     }
 
     boolean hover(int x, int y, int w, int h) {
@@ -214,7 +261,7 @@ final class Ui {
         g.outline(x, y, w, h, hot ? Theme.accent() : 0xFF3A4660);
         String shown = font.plainSubstrByWidth(label, Math.max(8, w - 6));
         g.text(font, shown, x + (w - font.width(shown)) / 2, y + (h - 8) / 2, Theme.TEXT);
-        building.add(new Hit(x, y, w, h, clip, action));
+        building.add(new Hit(x, y, w, h, clips.peek(), action));
     }
 
     void field(Field f, int x, int y, int w, int h) {
@@ -231,6 +278,6 @@ final class Ui {
                 g.text(font, "_", x + 4 + font.width(shown), y + (h - 8) / 2, Theme.accent());
             }
         }
-        building.add(new Hit(x, y, w, h, clip, () -> focus = f));
+        building.add(new Hit(x, y, w, h, clips.peek(), () -> focus = f));
     }
 }

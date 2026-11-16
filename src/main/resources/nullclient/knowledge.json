@@ -18,7 +18,24 @@
     {"item":"lapis_lazuli","blocks":["lapis_ore","deepslate_lapis_ore"],"tool":["stone_pickaxe","iron_pickaxe","diamond_pickaxe"],"scan":true},
     {"item":"diamond","blocks":["diamond_ore","deepslate_diamond_ore"],"tool":["iron_pickaxe","diamond_pickaxe"],"scan":true},
     {"item":"emerald","blocks":["emerald_ore","deepslate_emerald_ore"],"tool":["iron_pickaxe","diamond_pickaxe"],"scan":true},
-    {"item":"flint","blocks":["gravel"],"chance":0.1}
+    {"item":"flint","blocks":["gravel"],"chance":0.1},
+
+    {"item":"rotten_flesh","mobs":["zombie","husk","drowned"]},
+    {"item":"bone","mobs":["skeleton","stray"]},
+    {"item":"string","mobs":["spider","cave_spider"]},
+    {"item":"spider_eye","mobs":["spider","cave_spider"]},
+    {"item":"gunpowder","mobs":["creeper"]},
+    {"item":"ender_pearl","mobs":["enderman"]},
+    {"item":"blaze_rod","mobs":["blaze"]},
+    {"item":"slime_ball","mobs":["slime"]},
+    {"item":"ghast_tear","mobs":["ghast"]},
+    {"item":"magma_cream","mobs":["magma_cube"]},
+    {"item":"leather","mobs":["cow"]},
+    {"item":"beef","mobs":["cow"]},
+    {"item":"porkchop","mobs":["pig"]},
+    {"item":"chicken","mobs":["chicken"]},
+    {"item":"mutton","mobs":["sheep"]},
+    {"item":"feather","mobs":["chicken"]}
   ],
   "recipes": [
     {"out":"#planks","count":4,"pattern":["L"],"key":{"L":"#logs"}},
@@ -31,6 +48,13 @@
     {"out":"bucket","count":1,"pattern":["I I"," I "],"key":{"I":"iron_ingot"}},
     {"out":"shears","count":1,"pattern":[" I","I "],"key":{"I":"iron_ingot"}},
     {"out":"flint_and_steel","count":1,"shapeless":["iron_ingot","flint"]},
+    {"out":"oak_door","count":3,"pattern":["PP","PP","PP"],"key":{"P":"#planks"}},
+    {"out":"oak_boat","count":1,"pattern":["P P","PPP"],"key":{"P":"#planks"}},
+    {"out":"shield","count":1,"pattern":["PIP","PPP"," P "],"key":{"P":"#planks","I":"iron_ingot"}},
+    {"out":"bow","count":1,"pattern":[" ST","S T"," ST"],"key":{"S":"stick","T":"string"}},
+    {"out":"arrow","count":4,"pattern":["F","S","E"],"key":{"F":"flint","S":"stick","E":"feather"}},
+    {"out":"blaze_powder","count":2,"shapeless":["blaze_rod"]},
+    {"out":"ender_eye","count":1,"shapeless":["ender_pearl","blaze_powder"]},
 
     {"out":"wooden_pickaxe","count":1,"pattern":["PPP"," S "," S "],"key":{"P":"#planks","S":"stick"}},
     {"out":"stone_pickaxe","count":1,"pattern":["CCC"," S "," S "],"key":{"C":"#cobble","S":"stick"}},
@@ -71,7 +95,11 @@
     {"out":"gold_ingot","in":"raw_gold"},
     {"out":"glass","in":"sand"},
     {"out":"stone","in":"cobblestone"},
-    {"out":"charcoal","in":"#logs"}
+    {"out":"charcoal","in":"#logs"},
+    {"out":"cooked_beef","in":"beef"},
+    {"out":"cooked_porkchop","in":"porkchop"},
+    {"out":"cooked_chicken","in":"chicken"},
+    {"out":"cooked_mutton","in":"mutton"}
   ],
   "fuel": [
     {"item":"coal","burn":8},

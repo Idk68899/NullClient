@@ -7,10 +7,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/** Saved look of the menu: which picture goes in which slot, accent colour, panel opacity. */
+/** Saved look of the menu: which picture goes in which slot, background effect, accent colour, panel opacity. */
 public final class Theme {
-    public static final int[] ACCENTS = {0xFF00EBFF, 0xFFFF38CC, 0xFF33FF99, 0xFFFFAA33, 0xFFAA66FF};
-    public static final String[] ACCENT_NAMES = {"cyan", "magenta", "green", "amber", "violet"};
+    public static final int[] ACCENTS = {0xFFFF3B4B, 0xFF00EBFF, 0xFFFF38CC, 0xFF33FF99, 0xFFFFAA33, 0xFFAA66FF};
+    public static final String[] ACCENT_NAMES = {"red", "cyan", "magenta", "green", "amber", "violet"};
     private static final int[] ALPHAS = {0x66, 0x99, 0xCC};
     private static final String[] ALPHA_NAMES = {"glass", "medium", "solid"};
 
@@ -25,6 +25,7 @@ public final class Theme {
         String sidebar = "";
         String panel = "";
         String button = "";
+        String fx = "";
         int accent;
         int opacity = 1;
     }
@@ -50,6 +51,9 @@ public final class Theme {
             if (data == null) {
                 data = new Data();
             }
+            if (data.fx == null) {
+                data.fx = "";
+            }
         }
         return data;
     }
@@ -69,6 +73,7 @@ public final class Theme {
             case "background" -> x.background;
             case "sidebar" -> x.sidebar;
             case "panel" -> x.panel;
+            case "fx" -> x.fx;
             default -> x.button;
         };
     }
@@ -79,6 +84,7 @@ public final class Theme {
             case "background" -> x.background = value;
             case "sidebar" -> x.sidebar = value;
             case "panel" -> x.panel = value;
+            case "fx" -> x.fx = value;
             default -> x.button = value;
         }
         save();

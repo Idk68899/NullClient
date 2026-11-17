@@ -11,42 +11,53 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 25
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 9.5.1
-      - run: gradle build --no-daemon || true
-      - name: Inspect
+      - name: Sample minecraft-data
         run: |
-          JAR=$(find ~/.gradle -name 'minecraft-merged-deobf-26.2.jar' | head -1)
-          [ -z "$JAR" ] && JAR=$(find ~/.gradle -name 'minecraft-merged.jar' | head -1)
-          pub() { javap -public -cp "$JAR" "$1" 2>/dev/null | grep -v '^Compiled from' | sed -E 's/net\.minecraft\.network\.//g; s/net\.minecraft\.client\.//g; s/net\.minecraft\.//g; s/java\.lang\.//g; s/java\.util\.//g'; }
-          fq() { unzip -l "$JAR" | awk '{print $4}' | grep -E "/$1\.class$" | head -1 | sed 's/\.class$//; s#/#.#g'; }
-          show() { c=$(fq "$1"); if [ -n "$c" ]; then echo "--- $c"; pub "$c" | head -${2:-25}; else echo "--- $1: not found"; fi; }
-          {
-            echo "inspect of $JAR"
-            printf '%s\n' '```'
-            echo "===== SESSION EXTRA"
-            show EventLoopGroupHolder 20
-            show SimpleUnboundProtocol 14
-            show UnboundProtocol 10
-            show RegistryFriendlyByteBuf 14
-            show ClientPacketListener 30
-            show ServerboundSelectKnownPacks 6
-            show ClientboundLoginPacket 8
-            show ClientboundHelloPacket 8
-            show LocalSampleLogger 8
-            c=$(fq ClientGamePacketListener); echo "--- game listener names"; [ -n "$c" ] && pub "$c" | grep -E 'handleLogin|handleRespawn|handlePlayerPosition|handleDisconnect' | head -6
-            echo "===== SKIN AND ICONS"
-            show PlayerSkin 14
-            show PlayerSkinWidget 10
-            pub net.minecraft.client.gui.screens.inventory.InventoryScreen | grep -iE 'entity|player' | head -6
-            pub net.minecraft.client.gui.GuiGraphicsExtractor | grep -E ' item\(|fakeItem|entity|pip|submit' | head -10
-            printf '%s\n' '```'
-          } > inspect.txt
+          python3 - <<'PY'
+          import json, re, urllib.request
+          B = "https://raw.githubusercontent.com/PrismarineJS/minecraft-data/master/data/"
+          out = []
+          def say(s):
+              out.append(str(s))
+          def get(p):
+              with urllib.request.urlopen(B + p, timeout=60) as r:
+                  return json.load(r)
+          v = "?"
+          try:
+              dp = get("dataPaths.json")["pc"]
+              vers = [x for x in dp if re.fullmatch(r"\d+(\.\d+)*", x)]
+              vers.sort(key=lambda x: tuple(int(n) for n in x.split(".")))
+              say("newest versions: " + ", ".join(vers[-8:]))
+              say("any 26.x: " + str([x for x in vers if x.startswith("26")]))
+              v = vers[-1]
+              say("using " + v)
+              say("files for " + v + ": " + ", ".join(sorted(dp[v].keys())))
+              def load(kind):
+                  return get(dp[v][kind] + "/" + kind + ".json")
+              blocks = load("blocks")
+              for n in ("stone", "diamond_ore", "oak_log", "iron_ore"):
+                  for b in blocks:
+                      if b.get("name") == n:
+                          say(json.dumps({k: b.get(k) for k in ("name", "hardness", "drops", "harvestTools", "material", "diggable")}))
+              items = load("items")
+              ids = {i["name"]: i["id"] for i in items}
+              say("items: %d, sample %s" % (len(items), json.dumps(items[0])))
+              recipes = load("recipes")
+              say("recipes: %d" % len(recipes))
+              say("iron_pickaxe recipe: " + json.dumps(recipes.get(str(ids.get("iron_pickaxe"))))[:600])
+              for kind in ("entityLoot", "blockLoot", "foods", "entities"):
+                  if kind in dp[v]:
+                      try:
+                          d = load(kind)
+                          say("%s: %d entries, sample: %s" % (kind, len(d), json.dumps(d)[:500]))
+                      except Exception as e:
+                          say("%s failed: %s" % (kind, e))
+                  else:
+                      say(kind + ": not available for " + v)
+          except Exception as e:
+              say("ERROR: %r" % (e,))
+          open("inspect.txt", "w").write("inspect of minecraft-data " + v + "\n```\n" + "\n".join(out) + "\n```\n")
+          PY
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}

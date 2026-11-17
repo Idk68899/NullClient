@@ -3,7 +3,7 @@ package dev.nullclient.gui;
 import java.util.Arrays;
 import java.util.List;
 
-/** Pictures for the menu (drag in on PC, add by web link, or pick files already in the folder), accent, opacity. */
+/** Pictures for the menu (drag in on PC, add by web link, or pick files already in the folder), effect, accent, opacity. */
 final class SettingsPage implements Page {
     private static final String[] KEYS = {"background", "sidebar", "panel", "button"};
     private static final String[] NAMES = {"Background", "Sidebar", "Panels", "Buttons"};
@@ -42,6 +42,12 @@ final class SettingsPage implements Page {
     @Override
     public void draw(Ui ui, int x, int y, int w, int h) {
         String folder = Pics.dir().toAbsolutePath().toString();
+        ui.text("Animated background (drawn by code)", x, y, Theme.accent());
+        y += 12;
+        ui.label("Effect: " + Fx.label(Theme.slot("fx")), x, y + 5, w - 128, Theme.TEXT);
+        ui.button("Next", x + w - 124, y, 60, 18, () -> Theme.setSlot("fx", Fx.next(Theme.slot("fx"))));
+        ui.button("Off", x + w - 60, y, 60, 18, () -> Theme.setSlot("fx", ""));
+        y += 26;
         ui.text("Add a picture or GIF", x, y, Theme.accent());
         y += 12;
         ui.label("PC: drag the file onto the game window.", x, y, w, Theme.MUTED);

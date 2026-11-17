@@ -12,7 +12,8 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * "Legit" vision: instead of reading every loaded block, the AI only knows blocks that rays cast from its eyes
- * have hit. A dense cone follows the camera, and a thin sweep rotates around 360 degrees like glancing around.
+ * have hit. A dense cone follows the camera, and a sweep rotates around 360 degrees like glancing around; the sweep
+ * covers steep downward angles too, so from a high place (a pillar, a tree) it still sees the ground below.
  * Seen blocks are remembered for two minutes. When disabled, {@link #allowed} lets everything through.
  */
 public final class Vision {
@@ -24,6 +25,9 @@ public final class Vision {
     private static final long EVERY_TICKS = 4;
     private static final long REMEMBER_TICKS = 20L * 120L;
     private static final double SWEEP_STEP = 25.0;
+    private static final int SWEEP_ROWS = 16;
+    private static final double SWEEP_PITCH_MIN = -30.0;
+    private static final double SWEEP_PITCH_MAX = 89.0;
     private static final int MAX_SEEN = 40_000;
 
     private static final Long2LongOpenHashMap SEEN = new Long2LongOpenHashMap();
@@ -98,7 +102,11 @@ public final class Vision {
                 double yy = yaw + ((c + 0.5) / COLS - 0.5) * FOV_X;
                 cast(level, p, eye, yy, py, now);
             }
-            cast(level, p, eye, sweepYaw, ((r + 0.5) / ROWS - 0.5) * 140.0, now);
+        }
+        for (int r = 0; r < SWEEP_ROWS; r++) {
+            double sp = SWEEP_PITCH_MIN + (r + 0.5) / SWEEP_ROWS * (SWEEP_PITCH_MAX - SWEEP_PITCH_MIN);
+            cast(level, p, eye, sweepYaw, sp, now);
+            cast(level, p, eye, sweepYaw + 180.0, sp, now);
         }
         sweepYaw = (sweepYaw + SWEEP_STEP) % 360.0;
         if (SEEN.size() > MAX_SEEN || now % 400 == 0) {

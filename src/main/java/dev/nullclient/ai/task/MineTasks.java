@@ -32,9 +32,11 @@ import java.util.concurrent.ThreadLocalRandom;
  * MINE_COUNT (the "mine" command) or the inventory holds GOAL_COUNT of GOAL_ITEM (planner gather steps).
  *
  * <p>Finding blocks: uncommon blocks are looked up in the world index (it starts indexing them on first request
- * and waits for the first full scan); very common blocks (dirt, stone, sand) are found by scanning around the player,
- * out to 32 blocks if nothing is closer. The nearest block it can mine from a standing spot with a clear view wins;
- * buried blocks are reached by tunnelling. Every few ticks it also grabs any matching block within arm's reach.
+ * and waits for the first full scan); very common blocks (dirt, stone, sand) are found by scanning around the
+ * player: 14 blocks down and 6 up within 16 blocks sideways, and if nothing is there, 44 down and 8 up within 32
+ * (so it still finds the ground when standing on a pillar or a tree). The nearest block it can mine from a standing
+ * spot with a clear view wins; buried blocks are reached by tunnelling. Every few ticks it also grabs any matching
+ * block within arm's reach.
  */
 public final class MineTasks {
     private static final double REACH = 4.0;
@@ -44,9 +46,11 @@ public final class MineTasks {
     private static final double GRAB_RADIUS = 4.0;
     private static final int GRAB_EVERY = 4;
     private static final int SCAN_XZ = 16;
-    private static final int SCAN_Y = 8;
+    private static final int SCAN_DOWN = 14;
+    private static final int SCAN_UP = 6;
     private static final int BIG_XZ = 32;
-    private static final int BIG_Y = 12;
+    private static final int BIG_DOWN = 44;
+    private static final int BIG_UP = 8;
     private static final int SCAN_WAIT_TICKS = 400;
     private static final int COLLECT_TICKS = 40;
     private static final int COLLECT_GRACE = 8;
@@ -193,9 +197,12 @@ public final class MineTasks {
         return best;
     }
 
-    private static List<BlockPos> boxScan(ClientLevel level, BlockPos origin, String spec, int rxz, int ry) {
+    /** Blocks matching the spec within rxz sideways, {@code down} below and {@code up} above the origin, nearest first. */
+    private static List<BlockPos> boxScan(ClientLevel level, BlockPos origin, String spec, int rxz, int down, int up) {
         List<BlockPos> out = new ArrayList<>();
         BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
+        int minY = Math.max(level.getMinY(), origin.getY() - down);
+        int maxY = Math.min(level.getMaxY(), origin.getY() + up);
         for (int dx = -rxz; dx <= rxz; dx++) {
             for (int dz = -rxz; dz <= rxz; dz++) {
                 int x = origin.getX() + dx;
@@ -203,8 +210,8 @@ public final class MineTasks {
                 if (!level.hasChunk(x >> 4, z >> 4)) {
                     continue;
                 }
-                for (int dy = -ry; dy <= ry; dy++) {
-                    mp.set(x, origin.getY() + dy, z);
+                for (int y = minY; y <= maxY; y++) {
+                    mp.set(x, y, z);
                     if (BlockSpec.matches(level.getBlockState(mp), spec)) {
                         out.add(mp.immutable());
                     }
@@ -239,9 +246,9 @@ public final class MineTasks {
         AIKeys.BadSet bad = bb.get(AIKeys.BAD_TARGETS);
         List<BlockPos> candidates = indexed
                 ? WorldScanner.INSTANCE.find(spec, origin, 96, 80)
-                : boxScan(level, origin, spec, SCAN_XZ, SCAN_Y);
+                : boxScan(level, origin, spec, SCAN_XZ, SCAN_DOWN, SCAN_UP);
         if (candidates.isEmpty() && !indexed) {
-            candidates = boxScan(level, origin, spec, BIG_XZ, BIG_Y);
+            candidates = boxScan(level, origin, spec, BIG_XZ, BIG_DOWN, BIG_UP);
         }
 
         BlockPos bestT = null;
@@ -338,7 +345,7 @@ public final class MineTasks {
         Vec3 eye = p.getEyePosition();
         BlockPos best = null;
         double bestD = GRAB_RADIUS * GRAB_RADIUS;
-        for (BlockPos c : boxScan(level, p.blockPosition(), spec, 4, 4)) {
+        for (BlockPos c : boxScan(level, p.blockPosition(), spec, 4, 4, 4)) {
             if (bad != null && bad.contains(c.asLong())) {
                 continue;
             }

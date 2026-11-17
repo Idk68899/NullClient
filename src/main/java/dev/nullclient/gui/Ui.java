@@ -18,10 +18,11 @@ import java.util.function.BiConsumer;
  * pictures; clickable areas are recorded while drawing (in draw order, so later = on top) and used for the next
  * click. Supports nested clipping, dragging (polls the mouse button), mouse-wheel scrolling, and a vertical
  * content offset: pages draw in their own coordinates and {@link #beginContent} shifts everything for scrolling
- * while recording how tall the content is.
+ * while recording how tall the content is. Each clickable area remembers the offset it was drawn with, so
+ * {@link #mouseY()} and {@link #startDrag} give page coordinates inside click handlers too.
  */
 final class Ui {
-    private record Hit(int x, int y, int w, int h, int[] clip, Runnable action) {
+    private record Hit(int x, int y, int w, int h, int[] clip, int oy, Runnable action) {
         boolean contains(int px, int py) {
             if (px < x || px >= x + w || py < y || py >= y + h) {
                 return false;
@@ -43,6 +44,8 @@ final class Ui {
     private BiConsumer<Integer, Integer> drag;
     private double frameScroll;
     private int oy;
+    private int clickOy;
+    private boolean inClick;
     private boolean tracking;
     private int contentBottom;
     long frame;
@@ -141,13 +144,17 @@ final class Ui {
         }
     }
 
+    private int offset() {
+        return inClick ? clickOy : oy;
+    }
+
     int mouseX() {
         return mx;
     }
 
-    /** Mouse y in the current drawing coordinates (page coordinates while drawing scrolled content). */
+    /** Mouse y in the coordinates of whatever is being drawn or clicked (page coordinates for scrolled content). */
     int mouseY() {
-        return my - oy;
+        return my - offset();
     }
 
     /** Mouse-wheel movement this frame, consumed by whoever reads it first (positive = wheel up). */
@@ -159,7 +166,7 @@ final class Ui {
 
     /** While the mouse button stays down, calls {@code onMove} with the pointer position in current coordinates. */
     void startDrag(BiConsumer<Integer, Integer> onMove) {
-        int o = oy;
+        int o = offset();
         this.drag = (px, py) -> onMove.accept(px, py - o);
     }
 
@@ -170,7 +177,13 @@ final class Ui {
         for (int i = live.size() - 1; i >= 0; i--) {
             Hit h = live.get(i);
             if (h.contains(x, y)) {
-                h.action().run();
+                clickOy = h.oy();
+                inClick = true;
+                try {
+                    h.action().run();
+                } finally {
+                    inClick = false;
+                }
                 return;
             }
         }
@@ -248,7 +261,7 @@ final class Ui {
 
     /** An invisible clickable area (used to swallow clicks, drag windows, and drag scrollbars). */
     void area(int x, int y, int w, int h, Runnable action) {
-        building.add(new Hit(x, y + oy, w, h, clips.peek(), action));
+        building.add(new Hit(x, y + oy, w, h, clips.peek(), oy, action));
     }
 
     boolean hover(int x, int y, int w, int h) {
@@ -300,7 +313,7 @@ final class Ui {
         g.outline(x, y + oy, w, h, hot ? Theme.accent() : 0xFF3A4660);
         String shown = font.plainSubstrByWidth(label, Math.max(8, w - 6));
         g.text(font, shown, x + (w - font.width(shown)) / 2, y + oy + (h - 8) / 2, Theme.TEXT);
-        building.add(new Hit(x, y + oy, w, h, clips.peek(), action));
+        building.add(new Hit(x, y + oy, w, h, clips.peek(), oy, action));
     }
 
     /** A menu row: a small icon, then the name, with the accent outline when {@code on}. */
@@ -314,7 +327,7 @@ final class Ui {
         Icons.draw(this, icon, x + 5, y + (h - 8) / 2, on ? Theme.accent() : Theme.TEXT);
         String shown = font.plainSubstrByWidth(label, Math.max(8, w - 22));
         g.text(font, shown, x + 17, y + oy + (h - 8) / 2, Theme.TEXT);
-        building.add(new Hit(x, y + oy, w, h, clips.peek(), action));
+        building.add(new Hit(x, y + oy, w, h, clips.peek(), oy, action));
     }
 
     void field(Field f, int x, int y, int w, int h) {
@@ -331,6 +344,6 @@ final class Ui {
                 g.text(font, "_", x + 4 + font.width(shown), y + oy + (h - 8) / 2, Theme.accent());
             }
         }
-        building.add(new Hit(x, y + oy, w, h, clips.peek(), () -> focus = f));
+        building.add(new Hit(x, y + oy, w, h, clips.peek(), oy, () -> focus = f));
     }
 }

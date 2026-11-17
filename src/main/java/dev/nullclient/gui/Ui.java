@@ -16,7 +16,9 @@ import java.util.function.BiConsumer;
 /**
  * Immediate-mode drawing and input for the menu. Everything is drawn here with plain rectangles, text and
  * pictures; clickable areas are recorded while drawing (in draw order, so later = on top) and used for the next
- * click. Supports nested clipping, dragging (polls the mouse button) and mouse-wheel scrolling.
+ * click. Supports nested clipping, dragging (polls the mouse button), mouse-wheel scrolling, and a vertical
+ * content offset: pages draw in their own coordinates and {@link #beginContent} shifts everything for scrolling
+ * while recording how tall the content is.
  */
 final class Ui {
     private record Hit(int x, int y, int w, int h, int[] clip, Runnable action) {
@@ -40,6 +42,9 @@ final class Ui {
     private Field focus;
     private BiConsumer<Integer, Integer> drag;
     private double frameScroll;
+    private int oy;
+    private boolean tracking;
+    private int contentBottom;
     long frame;
 
     static NullClient nc() {
@@ -97,6 +102,8 @@ final class Ui {
         this.mx = mouseX;
         this.my = mouseY;
         this.clips.clear();
+        this.oy = 0;
+        this.tracking = false;
         this.frameScroll = pendingScroll;
         pendingScroll = 0.0;
         if (drag != null) {
@@ -111,22 +118,49 @@ final class Ui {
         this.frame++;
     }
 
+    // ------------------------------------------------------------------ scrolling content
+
+    /** Everything drawn until {@link #endContent()} is shifted by {@code offsetY} and measured. */
+    void beginContent(int offsetY) {
+        this.oy = offsetY;
+        this.tracking = true;
+        this.contentBottom = 0;
+    }
+
+    /** Returns the lowest y (in the page's own coordinates) that anything was drawn to. */
+    int endContent() {
+        int bottom = contentBottom;
+        this.oy = 0;
+        this.tracking = false;
+        return bottom;
+    }
+
+    private void track(int bottom) {
+        if (tracking && bottom > contentBottom) {
+            contentBottom = bottom;
+        }
+    }
+
     int mouseX() {
         return mx;
     }
 
+    /** Mouse y in the current drawing coordinates (page coordinates while drawing scrolled content). */
     int mouseY() {
-        return my;
+        return my - oy;
     }
 
-    /** Mouse-wheel movement this frame (positive = wheel up). */
+    /** Mouse-wheel movement this frame, consumed by whoever reads it first (positive = wheel up). */
     double scrollDelta() {
-        return frameScroll;
+        double d = frameScroll;
+        frameScroll = 0.0;
+        return d;
     }
 
-    /** While the mouse button stays down, calls {@code onMove} with the pointer position each frame. */
+    /** While the mouse button stays down, calls {@code onMove} with the pointer position in current coordinates. */
     void startDrag(BiConsumer<Integer, Integer> onMove) {
-        this.drag = onMove;
+        int o = oy;
+        this.drag = (px, py) -> onMove.accept(px, py - o);
     }
 
     // ------------------------------------------------------------------ input
@@ -182,10 +216,11 @@ final class Ui {
 
     /** Draws only inside the rectangle (and ignores clicks outside it) until {@link #unclip()}. Calls nest. */
     void clip(int x, int y, int w, int h) {
+        int ay = y + oy;
         int x0 = x;
-        int y0 = y;
+        int y0 = ay;
         int x1 = x + w;
-        int y1 = y + h;
+        int y1 = ay + h;
         int[] top = clips.peek();
         if (top != null) {
             x0 = Math.max(x0, top[0]);
@@ -194,7 +229,7 @@ final class Ui {
             y1 = Math.min(y1, top[1] + top[3]);
         }
         clips.push(new int[]{x0, y0, Math.max(0, x1 - x0), Math.max(0, y1 - y0)});
-        g.enableScissor(x, y, x + w, y + h);
+        g.enableScissor(x, ay, x + w, ay + h);
     }
 
     void unclip() {
@@ -213,28 +248,32 @@ final class Ui {
 
     /** An invisible clickable area (used to swallow clicks, drag windows, and drag scrollbars). */
     void area(int x, int y, int w, int h, Runnable action) {
-        building.add(new Hit(x, y, w, h, clips.peek(), action));
+        building.add(new Hit(x, y + oy, w, h, clips.peek(), action));
     }
 
     boolean hover(int x, int y, int w, int h) {
-        return mx >= x && mx < x + w && my >= y && my < y + h;
+        return mx >= x && mx < x + w && my >= y + oy && my < y + oy + h;
     }
 
     void fill(int x, int y, int w, int h, int color) {
-        g.fill(x, y, x + w, y + h, color);
+        g.fill(x, y + oy, x + w, y + oy + h, color);
+        track(y + h);
     }
 
     void text(String s, int x, int y, int color) {
-        g.text(font, s, x, y, color);
+        g.text(font, s, x, y + oy, color);
+        track(y + 9);
     }
 
     /** Text cut to fit the width. */
     void label(String s, int x, int y, int w, int color) {
-        g.text(font, font.plainSubstrByWidth(s, w), x, y, color);
+        g.text(font, font.plainSubstrByWidth(s, w), x, y + oy, color);
+        track(y + 9);
     }
 
     void pic(Pics.Pic p, int x, int y, int w, int h) {
-        g.blit(RenderPipelines.GUI_TEXTURED, p.at(System.currentTimeMillis()), x, y, 0f, 0f, w, h, p.w(), p.h(), p.w(), p.h());
+        g.blit(RenderPipelines.GUI_TEXTURED, p.at(System.currentTimeMillis()), x, y + oy, 0f, 0f, w, h, p.w(), p.h(), p.w(), p.h());
+        track(y + h);
     }
 
     void panel(int x, int y, int w, int h, String slot) {
@@ -244,7 +283,7 @@ final class Ui {
             pic(p, x, y, w, h);
             fill(x, y, w, h, 0x880A0D16);
         }
-        g.outline(x, y, w, h, Theme.accent());
+        g.outline(x, y + oy, w, h, Theme.accent());
     }
 
     void button(String label, int x, int y, int w, int h, Runnable action) {
@@ -258,26 +297,40 @@ final class Ui {
         if (hot) {
             fill(x, y, w, h, (0x55 << 24) | (Theme.accent() & 0xFFFFFF));
         }
-        g.outline(x, y, w, h, hot ? Theme.accent() : 0xFF3A4660);
+        g.outline(x, y + oy, w, h, hot ? Theme.accent() : 0xFF3A4660);
         String shown = font.plainSubstrByWidth(label, Math.max(8, w - 6));
-        g.text(font, shown, x + (w - font.width(shown)) / 2, y + (h - 8) / 2, Theme.TEXT);
-        building.add(new Hit(x, y, w, h, clips.peek(), action));
+        g.text(font, shown, x + (w - font.width(shown)) / 2, y + oy + (h - 8) / 2, Theme.TEXT);
+        building.add(new Hit(x, y + oy, w, h, clips.peek(), action));
+    }
+
+    /** A menu row: a small icon, then the name, with the accent outline when {@code on}. */
+    void iconButton(String icon, String label, int x, int y, int w, int h, boolean on, Runnable action) {
+        boolean hot = hover(x, y, w, h);
+        fill(x, y, w, h, on ? 0xCC2A1014 : 0xAA101826);
+        if (hot) {
+            fill(x, y, w, h, (0x44 << 24) | (Theme.accent() & 0xFFFFFF));
+        }
+        g.outline(x, y + oy, w, h, on || hot ? Theme.accent() : 0xFF3A4660);
+        Icons.draw(this, icon, x + 5, y + (h - 8) / 2, on ? Theme.accent() : Theme.TEXT);
+        String shown = font.plainSubstrByWidth(label, Math.max(8, w - 22));
+        g.text(font, shown, x + 17, y + oy + (h - 8) / 2, Theme.TEXT);
+        building.add(new Hit(x, y + oy, w, h, clips.peek(), action));
     }
 
     void field(Field f, int x, int y, int w, int h) {
         boolean has = focus == f;
         fill(x, y, w, h, 0xCC0A0F1A);
-        g.outline(x, y, w, h, has ? Theme.accent() : 0xFF3A4660);
+        g.outline(x, y + oy, w, h, has ? Theme.accent() : 0xFF3A4660);
         String raw = f.mask ? "*".repeat(f.text.length()) : f.text;
         String shown = font.plainSubstrByWidth(raw, w - 8, true);
         if (f.text.isEmpty() && !has) {
-            g.text(font, font.plainSubstrByWidth(f.hint, w - 8), x + 4, y + (h - 8) / 2, Theme.MUTED);
+            g.text(font, font.plainSubstrByWidth(f.hint, w - 8), x + 4, y + oy + (h - 8) / 2, Theme.MUTED);
         } else {
-            g.text(font, shown, x + 4, y + (h - 8) / 2, Theme.TEXT);
+            g.text(font, shown, x + 4, y + oy + (h - 8) / 2, Theme.TEXT);
             if (has && (frame / 10) % 2 == 0) {
-                g.text(font, "_", x + 4 + font.width(shown), y + (h - 8) / 2, Theme.accent());
+                g.text(font, "_", x + 4 + font.width(shown), y + oy + (h - 8) / 2, Theme.accent());
             }
         }
-        building.add(new Hit(x, y, w, h, clips.peek(), () -> focus = f));
+        building.add(new Hit(x, y + oy, w, h, clips.peek(), () -> focus = f));
     }
 }

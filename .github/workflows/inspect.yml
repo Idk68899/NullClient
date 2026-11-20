@@ -11,53 +11,58 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Sample minecraft-data
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+      - run: gradle build --no-daemon || true
+      - name: Wiki samples
         run: |
           python3 - <<'PY'
-          import json, re, urllib.request
-          B = "https://raw.githubusercontent.com/PrismarineJS/minecraft-data/master/data/"
+          import json, urllib.parse, urllib.request
           out = []
-          def say(s):
-              out.append(str(s))
-          def get(p):
-              with urllib.request.urlopen(B + p, timeout=60) as r:
-                  return json.load(r)
-          v = "?"
-          try:
-              dp = get("dataPaths.json")["pc"]
-              vers = [x for x in dp if re.fullmatch(r"\d+(\.\d+)*", x)]
-              vers.sort(key=lambda x: tuple(int(n) for n in x.split(".")))
-              say("newest versions: " + ", ".join(vers[-8:]))
-              say("any 26.x: " + str([x for x in vers if x.startswith("26")]))
-              v = vers[-1]
-              say("using " + v)
-              say("files for " + v + ": " + ", ".join(sorted(dp[v].keys())))
-              def load(kind):
-                  return get(dp[v][kind] + "/" + kind + ".json")
-              blocks = load("blocks")
-              for n in ("stone", "diamond_ore", "oak_log", "iron_ore"):
-                  for b in blocks:
-                      if b.get("name") == n:
-                          say(json.dumps({k: b.get(k) for k in ("name", "hardness", "drops", "harvestTools", "material", "diggable")}))
-              items = load("items")
-              ids = {i["name"]: i["id"] for i in items}
-              say("items: %d, sample %s" % (len(items), json.dumps(items[0])))
-              recipes = load("recipes")
-              say("recipes: %d" % len(recipes))
-              say("iron_pickaxe recipe: " + json.dumps(recipes.get(str(ids.get("iron_pickaxe"))))[:600])
-              for kind in ("entityLoot", "blockLoot", "foods", "entities"):
-                  if kind in dp[v]:
-                      try:
-                          d = load(kind)
-                          say("%s: %d entries, sample: %s" % (kind, len(d), json.dumps(d)[:500]))
-                      except Exception as e:
-                          say("%s failed: %s" % (kind, e))
-                  else:
-                      say(kind + ": not available for " + v)
-          except Exception as e:
-              say("ERROR: %r" % (e,))
-          open("inspect.txt", "w").write("inspect of minecraft-data " + v + "\n```\n" + "\n".join(out) + "\n```\n")
+          for page in ["Iron_Pickaxe", "Shield", "Diamond_Boots", "Stick", "Bucket"]:
+              url = "https://minecraft.wiki/api.php?action=parse&prop=wikitext&format=json&formatversion=2&redirects=1&page=" + urllib.parse.quote(page)
+              try:
+                  req = urllib.request.Request(url, headers={"User-Agent": "NullClient/1.0 (Minecraft mod; recipe lookup)"})
+                  data = json.load(urllib.request.urlopen(req, timeout=30))
+                  w = data["parse"]["wikitext"]
+                  if isinstance(w, dict):
+                      w = w.get("*", "")
+                  i = w.lower().find("{{crafting")
+                  out.append("=== " + page + "\n" + (w[i:i + 700] if i >= 0 else "(no {{Crafting}} template found; first 300 chars) " + w[:300]))
+              except Exception as e:
+                  out.append("=== " + page + " ERROR " + repr(e))
+          open("wiki.txt", "w").write("\n\n".join(out))
           PY
+      - name: Classes
+        run: |
+          JAR=$(find ~/.gradle -name 'minecraft-merged-deobf-26.2.jar' | head -1)
+          [ -z "$JAR" ] && JAR=$(find ~/.gradle -name 'minecraft-merged.jar' | head -1)
+          pub() { javap -public -cp "$JAR" "$1" 2>/dev/null | grep -v '^Compiled from' | sed -E 's/net\.minecraft\.client\.//g; s/net\.minecraft\.//g; s/java\.lang\.//g; s/java\.util\.//g'; }
+          {
+            echo "inspect of $JAR"
+            printf '%s\n' '```'
+            echo "===== WIKI SAMPLES"
+            cat wiki.txt
+            echo
+            echo "===== GameRenderer render/extract methods"
+            pub net.minecraft.client.renderer.GameRenderer | grep -iE 'render|extract|level' | head -25
+            echo "===== LevelRenderer render/extract methods"
+            pub net.minecraft.client.renderer.LevelRenderer | grep -iE 'render|extract' | head -25
+            echo "===== Camera"
+            pub net.minecraft.client.Camera | head -30
+            echo "===== Minecraft camera / render members"
+            javap -public -cp "$JAR" net.minecraft.client.Minecraft | grep -iE 'camera|renderFrame|gameRenderer' | head -10
+            echo "===== RemotePlayer / Entity constructors"
+            pub net.minecraft.client.player.RemotePlayer | head -8
+            echo "===== Fabric rendering api"
+            for F in $(find ~/.gradle -name 'fabric-rendering*.jar' | head -2); do echo "-- $F"; unzip -l "$F" | awk '{print $4}' | grep -E 'client/rendering/v1/.*(Level|World|Hud)' | head -25; done
+            printf '%s\n' '```'
+          } > inspect.txt
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}

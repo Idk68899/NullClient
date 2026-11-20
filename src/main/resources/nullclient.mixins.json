@@ -1,9 +1,11 @@
+
 {
   "required": false,
   "minVersion": "0.8",
   "package": "dev.nullclient.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
+    "GameRendererGateMixin",
     "KeyboardInputMixin",
     "MinecraftAccessor",
     "MinecraftMixin",

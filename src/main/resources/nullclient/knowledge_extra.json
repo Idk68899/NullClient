@@ -1,0 +1,19 @@
+{
+  "recipes": [
+    {"out":"leather_helmet","count":1,"pattern":["LLL","L L"],"key":{"L":"leather"}},
+    {"out":"leather_chestplate","count":1,"pattern":["L L","LLL","LLL"],"key":{"L":"leather"}},
+    {"out":"leather_leggings","count":1,"pattern":["LLL","L L","L L"],"key":{"L":"leather"}},
+    {"out":"leather_boots","count":1,"pattern":["L L","L L"],"key":{"L":"leather"}},
+
+    {"out":"golden_helmet","count":1,"pattern":["GGG","G G"],"key":{"G":"gold_ingot"}},
+    {"out":"golden_chestplate","count":1,"pattern":["G G","GGG","GGG"],"key":{"G":"gold_ingot"}},
+    {"out":"golden_leggings","count":1,"pattern":["GGG","G G","G G"],"key":{"G":"gold_ingot"}},
+    {"out":"golden_boots","count":1,"pattern":["G G","G G"],"key":{"G":"gold_ingot"}},
+
+    {"out":"golden_pickaxe","count":1,"pattern":["GGG"," S "," S "],"key":{"G":"gold_ingot","S":"stick"}},
+    {"out":"golden_axe","count":1,"pattern":["GG","GS"," S"],"key":{"G":"gold_ingot","S":"stick"}},
+    {"out":"golden_shovel","count":1,"pattern":["G","S","S"],"key":{"G":"gold_ingot","S":"stick"}},
+    {"out":"golden_hoe","count":1,"pattern":["GG"," S"," S"],"key":{"G":"gold_ingot","S":"stick"}},
+    {"out":"golden_sword","count":1,"pattern":["G","G","S"],"key":{"G":"gold_ingot","S":"stick"}}
+  ]
+}

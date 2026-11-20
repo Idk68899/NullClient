@@ -1,4 +1,3 @@
-
 package dev.nullclient.gui;
 
 import dev.nullclient.NullClient;
@@ -22,6 +21,8 @@ import java.util.Set;
 final class ServerPage implements Page {
     private record Row(String name, int ping, String mode, int dist, boolean mine) {
     }
+
+    private static final String[] TIME_METHODS = {"getDayTime", "getDefaultClockTime", "getTimeOfDay", "dayTime"};
 
     private List<Row> rows = List.of();
     private PluginProbe.Report rep;
@@ -53,6 +54,20 @@ final class ServerPage implements Page {
         } catch (ReflectiveOperationException | RuntimeException e) {
             return null;
         }
+    }
+
+    /** Time of day in ticks. Looked up by name because 26.2 moved it; falls back to the game tick counter. */
+    private static long dayTime(ClientLevel level) {
+        Object[] sources = {level, call(level, "getLevelData")};
+        for (Object src : sources) {
+            for (String name : TIME_METHODS) {
+                Object r = call(src, name);
+                if (r instanceof Long l) {
+                    return l;
+                }
+            }
+        }
+        return level.getGameTime();
     }
 
     private static String dimension(ClientLevel level) {
@@ -131,7 +146,7 @@ final class ServerPage implements Page {
         out.add("server: " + (sd == null ? "singleplayer / LAN" : sd.name + " (" + sd.ip + ")"));
         out.add("software: " + (rep == null || rep.brand.isEmpty() ? "unknown" : rep.brand) + ", version " + (sd == null || sd.version == null ? "?" : sd.version.getString()));
         if (level != null) {
-            out.add("world: " + dimension(level) + ", " + clock(level.getDayTime()) + ", "
+            out.add("world: " + dimension(level) + ", " + clock(dayTime(level)) + ", "
                     + (level.isThundering() ? "thunder" : level.isRaining() ? "rain" : "clear") + ", difficulty " + level.getDifficulty());
         }
         out.add("anticheat: " + (anticheats.isEmpty() ? "none detected from visible commands" : String.join("; ", anticheats)));
@@ -227,7 +242,7 @@ final class ServerPage implements Page {
         y += 12;
         ui.label("Dimension: " + dimension(level) + "    Game mode: " + Modes.type(), x, y, w, Theme.TEXT);
         y += 11;
-        ui.label("Time: " + clock(level.getDayTime()) + "    Weather: " + (level.isThundering() ? "thunder" : level.isRaining() ? "rain" : "clear"), x, y, w, Theme.TEXT);
+        ui.label("Time: " + clock(dayTime(level)) + "    Weather: " + (level.isThundering() ? "thunder" : level.isRaining() ? "rain" : "clear"), x, y, w, Theme.TEXT);
         y += 11;
         ui.label("Difficulty: " + level.getDifficulty() + "    Players loaded near you: " + Math.max(0, level.players().size() - 1), x, y, w, Theme.TEXT);
         y += 16;

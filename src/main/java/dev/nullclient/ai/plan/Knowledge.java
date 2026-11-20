@@ -3,16 +3,21 @@ package dev.nullclient.ai.plan;
 import com.google.gson.Gson;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Data-driven game knowledge loaded from knowledge.json: tags, gather sources (blocks or mobs), recipes, smelting, fuel. */
+/**
+ * Data-driven game knowledge: tags, gather sources (blocks or mobs), recipes, smelting, fuel. Loaded from knowledge.json,
+ * extended by knowledge_extra.json and by recipes learned from the Minecraft Wiki (see {@link WikiKnowledge}).
+ */
 public final class Knowledge {
     public static final class Gather {
         public String item;
@@ -79,15 +84,59 @@ public final class Knowledge {
 
     private static Knowledge instance;
 
+    private static Knowledge read(String resource, boolean required) {
+        try (InputStream in = Knowledge.class.getResourceAsStream(resource)) {
+            if (in == null) {
+                if (required) {
+                    throw new IllegalStateException(resource + " is missing");
+                }
+                return null;
+            }
+            try (Reader r = new InputStreamReader(in, StandardCharsets.UTF_8)) {
+                return new Gson().fromJson(r, Knowledge.class);
+            }
+        } catch (IOException | RuntimeException e) {
+            if (required) {
+                throw new IllegalStateException(resource + " unreadable", e);
+            }
+            return null;
+        }
+    }
+
     public static synchronized Knowledge get() {
         if (instance == null) {
-            try (Reader r = new InputStreamReader(Knowledge.class.getResourceAsStream("/nullclient/knowledge.json"), StandardCharsets.UTF_8)) {
-                instance = new Gson().fromJson(r, Knowledge.class);
-            } catch (IOException | RuntimeException e) {
-                throw new IllegalStateException("knowledge.json unreadable", e);
+            Knowledge k = read("/nullclient/knowledge.json", true);
+            Knowledge extra = read("/nullclient/knowledge_extra.json", false);
+            if (extra != null) {
+                k.merge(extra);
             }
+            WikiKnowledge.applyCache(k);
+            instance = k;
         }
         return instance;
+    }
+
+    private static <T> List<T> concat(List<T> a, List<T> b) {
+        List<T> out = new ArrayList<>(a);
+        out.addAll(b);
+        return out;
+    }
+
+    private void merge(Knowledge o) {
+        recipes = concat(recipes, o.recipes);
+        gather = concat(gather, o.gather);
+        smelt = concat(smelt, o.smelt);
+        fuel = concat(fuel, o.fuel);
+        Map<String, List<String>> t = new LinkedHashMap<>(tags);
+        t.putAll(o.tags);
+        tags = t;
+    }
+
+    /** Adds a recipe learned at runtime (from the wiki cache or a live lookup). */
+    public synchronized void addRecipe(Recipe r) {
+        List<Recipe> n = new ArrayList<>(recipes);
+        n.add(r);
+        recipes = n;
     }
 
     public List<Fuel> fuel() {
@@ -124,6 +173,11 @@ public final class Knowledge {
             }
         }
         return null;
+    }
+
+    /** True if the AI knows some way to obtain the item. */
+    public boolean known(String item) {
+        return gatherFor(item) != null || recipeFor(item) != null || smeltFor(item) != null;
     }
 
     /** Block ids the world scanner should index. */

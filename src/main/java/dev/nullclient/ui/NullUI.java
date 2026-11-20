@@ -1,6 +1,7 @@
 package dev.nullclient.ui;
 
 import dev.nullclient.NullClient;
+import dev.nullclient.core.script.ScriptRunner;
 import dev.nullclient.gui.AutoLogin;
 import dev.nullclient.gui.Join;
 import dev.nullclient.gui.MenuScreen;
@@ -10,7 +11,7 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
 
-/** Opens and closes the menu ({@link MenuScreen}), finishes pending joins, runs auto login, and handles hotkeys. */
+/** Opens and closes the menu ({@link MenuScreen}), finishes pending joins, runs auto login and scripts, and handles hotkeys. */
 public final class NullUI {
     private final NullClient nc;
     private boolean toggleDown;
@@ -48,11 +49,12 @@ public final class NullUI {
         }
     }
 
-    /** RIGHT SHIFT toggles the menu; END is the panic key that stops every agent and macro. */
+    /** RIGHT SHIFT toggles the menu; END is the panic key that stops every agent, script and macro. */
     public void pollHotkeys(Minecraft mc) {
         Join.tick(mc);
         AutoLogin.tick(mc);
         Pov.tick(mc);
+        ScriptRunner.tick(mc);
         if (pendingToggle && (mc.gui.screen() == null || mc.gui.screen() instanceof MenuScreen)) {
             pendingToggle = false;
             toggleNow(mc);
@@ -69,6 +71,7 @@ public final class NullUI {
 
         boolean panic = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_END) == GLFW.GLFW_PRESS;
         if (panic && !panicDown) {
+            ScriptRunner.stop();
             nc.ai().cancelAll();
             nc.macros().stopPlayback();
             nc.macros().stopRecording(false);

@@ -20,8 +20,9 @@ import java.util.regex.Pattern;
 
 /**
  * Finds out what a server runs using only what it has already told your client: its brand, and the command list it sent
- * when you joined (commands like "essentials:home" reveal the plugin that registered them). Optionally runs /plugins
- * and reads the answer. It never guesses or brute-forces command names.
+ * when you joined (commands like "essentials:home" reveal the plugin that registered them, and well-known anticheat
+ * commands reveal the anticheat). Optionally runs /plugins and reads the answer. It never guesses or brute-forces
+ * command names, and a server that hides its commands simply shows nothing.
  */
 final class PluginProbe {
     static final class Report {
@@ -32,10 +33,12 @@ final class PluginProbe {
         final List<String> software = new ArrayList<>();
         final List<String> namespaces = new ArrayList<>();
         final List<String> hints = new ArrayList<>();
+        final List<String> anticheats = new ArrayList<>();
     }
 
     private static final Set<String> SOFTWARE = Set.of("bukkit", "spigot", "paper", "purpur", "folia", "velocity", "bungeecord", "waterfall");
     private static final Map<String, String> HINTS = new LinkedHashMap<>();
+    private static final Map<String, String> ANTICHEATS = new LinkedHashMap<>();
     private static final Pattern TOKEN = Pattern.compile("[A-Za-z0-9_.\\-]{2,32}");
 
     private static boolean listening;
@@ -75,6 +78,29 @@ final class PluginProbe {
         HINTS.put("claim", "a land-claim plugin");
         HINTS.put("res", "Residence");
         HINTS.put("gp", "GriefPrevention");
+
+        ANTICHEATS.put("grim", "Grim AC");
+        ANTICHEATS.put("grimac", "Grim AC");
+        ANTICHEATS.put("vulcan", "Vulcan");
+        ANTICHEATS.put("matrix", "Matrix");
+        ANTICHEATS.put("ncp", "NoCheatPlus");
+        ANTICHEATS.put("nocheatplus", "NoCheatPlus");
+        ANTICHEATS.put("aac", "AAC");
+        ANTICHEATS.put("spartan", "Spartan");
+        ANTICHEATS.put("themis", "Themis");
+        ANTICHEATS.put("intave", "Intave");
+        ANTICHEATS.put("verus", "Verus");
+        ANTICHEATS.put("karhu", "Karhu");
+        ANTICHEATS.put("polar", "Polar");
+        ANTICHEATS.put("negativity", "Negativity");
+        ANTICHEATS.put("reflex", "Reflex");
+        ANTICHEATS.put("hawk", "Hawk");
+        ANTICHEATS.put("godseye", "GodsEye");
+        ANTICHEATS.put("wraith", "Wraith");
+        ANTICHEATS.put("sparky", "Sparky");
+        ANTICHEATS.put("antiaura", "AntiAura");
+        ANTICHEATS.put("anticheatreloaded", "AntiCheatReloaded");
+        ANTICHEATS.put("acr", "AntiCheatReloaded");
     }
 
     private PluginProbe() {
@@ -122,6 +148,7 @@ final class PluginProbe {
                 ns.add(n.substring(0, i).toLowerCase(Locale.ROOT));
             }
         }
+        LinkedHashSet<String> ac = new LinkedHashSet<>();
         for (String s : ns) {
             if (s.equals("minecraft")) {
                 continue;
@@ -131,16 +158,39 @@ final class PluginProbe {
             } else {
                 r.namespaces.add(s);
             }
+            String hit = ANTICHEATS.get(s);
+            if (hit != null) {
+                ac.add(hit + "  (command namespace " + s + ":)");
+            }
         }
         Set<String> seen = new LinkedHashSet<>();
         for (String n : names) {
-            String base = n.contains(":") ? n.substring(n.indexOf(':') + 1) : n;
-            String hint = HINTS.get(base.toLowerCase(Locale.ROOT));
+            String base = (n.contains(":") ? n.substring(n.indexOf(':') + 1) : n).toLowerCase(Locale.ROOT);
+            String hint = HINTS.get(base);
             if (hint != null && seen.add(hint)) {
                 r.hints.add(hint + "  (via /" + base + ")");
             }
+            String hit = ANTICHEATS.get(base);
+            if (hit != null) {
+                ac.add(hit + "  (via /" + base + ")");
+            }
         }
+        r.anticheats.addAll(ac);
         return r;
+    }
+
+    /** Anticheats found in the command list plus any named in a /plugins answer. */
+    static List<String> anticheats(Report r) {
+        LinkedHashSet<String> out = new LinkedHashSet<>(r.anticheats);
+        for (String plugin : plugins()) {
+            String low = plugin.toLowerCase(Locale.ROOT);
+            for (Map.Entry<String, String> e : ANTICHEATS.entrySet()) {
+                if (low.equals(e.getKey()) || (e.getKey().length() > 4 && low.contains(e.getKey()))) {
+                    out.add(e.getValue() + "  (listed by /plugins)");
+                }
+            }
+        }
+        return new ArrayList<>(out);
     }
 
     // ------------------------------------------------------------------ /plugins

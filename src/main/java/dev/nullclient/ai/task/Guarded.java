@@ -13,9 +13,9 @@ import net.minecraft.client.player.LocalPlayer;
 
 /**
  * Wraps a task with safety: game-mode check, optional "leave when a player comes near", survival reflexes
- * (water clutch), the low-health shelter, mob combat, and eating. Anything it handles takes priority over the task
- * for that tick. When it hands control back, the task's old route is thrown away so it plans a fresh one from
- * wherever the player ended up (the interruption never counts as a failure).
+ * (water clutch), the low-health shelter, mob combat, eating, and wearing armor. Anything it handles takes priority
+ * over the task for that tick. When it hands control back, the task's old route is thrown away so it plans a fresh
+ * one from wherever the player ended up (the interruption never counts as a failure).
  */
 public final class Guarded implements Node {
     /** When on, disconnects if a player who is not one of your accounts comes within {@value #NEAR} blocks. */
@@ -90,6 +90,7 @@ public final class Guarded implements Node {
             }
             return Status.RUNNING;
         }
+        Armor.tick(mc, p);
         if (wasBusy) {
             wasBusy = false;
             NavTasks.resetNav(bb);

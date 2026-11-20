@@ -19,8 +19,8 @@ import java.util.List;
  * scrolls (wheel, scrollbar, or dragging empty space). Drawn entirely by our own code (see {@link Ui}).
  */
 public final class MenuScreen extends Screen {
-    private static final List<Page> PAGES = List.of(new AiPage(), new AccountsPage(), new PovPage(), new ProxyPage(),
-            new MacrosPage(), new LoggerPage(), new ServerPage(), new SettingsPage());
+    private static final List<Page> PAGES = List.of(new AiPage(), new ViewPage(), new AccountsPage(), new PovPage(),
+            new PluginsPage(), new ProxyPage(), new MacrosPage(), new LoggerPage(), new ServerPage(), new SettingsPage());
     private static final Page MAIN = new MainPage();
     private static final Ui UI = new Ui();
     private static final List<Win> WINS = new ArrayList<>();

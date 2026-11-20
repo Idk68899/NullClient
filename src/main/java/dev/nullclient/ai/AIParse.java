@@ -10,11 +10,19 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/** Turns free text into [verb, args...] and checks that named items and blocks exist. */
+/** Turns free text into [verb, args...] and checks that named items and blocks exist. Understands basic commands like "get down". */
 public final class AIParse {
-    private static final Set<String> DIRECT = Set.of("goto", "wander", "follow", "stop");
+    private static final Set<String> DIRECT = Set.of("goto", "wander", "follow", "stop", "down", "up", "course", "armor");
     private static final Set<String> ITEM_VERBS = Set.of("get", "plan", "mine", "make", "craft", "give", "find", "collect", "gather", "bring");
     private static final Set<String> FILLER = Set.of("me", "a", "an", "the", "some", "please", "pls", "i", "want", "need", "to", "can", "you", "of");
+
+    private static final Set<String> NOISE = Set.of("please", "pls", "just", "can", "could", "would", "you", "kindly", "now", "me", "the",
+            "this", "that", "from", "here", "to", "of", "off", "a", "an", "and", "then", "it", "there", "are", "is", "i", "want", "need");
+    private static final Set<String> MOVES = Set.of("get", "go", "come", "climb", "jump", "walk", "move", "head", "run", "take",
+            "tower", "building", "hill", "mountain", "cliff", "platform", "roof", "wall", "tree", "island", "pillar", "cave", "underground", "put");
+    private static final Set<String> DOWN = Set.of("down", "descend", "downstairs");
+    private static final Set<String> UP = Set.of("up", "out", "outside", "surface", "exit", "upstairs");
+    private static final Set<String> STAY = Set.of("stay", "wait", "stand", "halt", "freeze", "still");
 
     private AIParse() {
     }
@@ -24,15 +32,90 @@ public final class AIParse {
         return DIRECT.contains(s) || ITEM_VERBS.contains(s);
     }
 
+    /** "get down", "go up", "stay" and similar: returns the real task, or null if the words are about something else. */
+    private static String[] basic(List<String> words) {
+        List<String> w = new ArrayList<>();
+        for (String s : words) {
+            if (!NOISE.contains(s)) {
+                w.add(s);
+            }
+        }
+        if (w.isEmpty()) {
+            return null;
+        }
+        boolean down = false;
+        boolean up = false;
+        boolean stay = false;
+        for (String s : w) {
+            if (DOWN.contains(s)) {
+                down = true;
+            } else if (UP.contains(s)) {
+                up = true;
+            } else if (STAY.contains(s)) {
+                stay = true;
+            } else if (!MOVES.contains(s)) {
+                return null;
+            }
+        }
+        if (down && !up && !stay) {
+            return new String[]{"down"};
+        }
+        if (up && !down && !stay) {
+            return new String[]{"up"};
+        }
+        if (stay && !down && !up) {
+            return new String[]{"stop"};
+        }
+        return null;
+    }
+
+    /** "full set of iron armor" -> [armor, iron]. */
+    private static String[] armor(List<String> w) {
+        boolean armor = false;
+        for (String s : w) {
+            if (s.equals("armor") || s.equals("armour") || s.endsWith("_armor") || s.endsWith("_armour")) {
+                armor = true;
+            }
+        }
+        if (!armor) {
+            return null;
+        }
+        String mat = "iron";
+        for (String s : w) {
+            if (s.contains("netherite")) {
+                throw new IllegalArgumentException("netherite armor needs a smithing table upgrade, which I cannot do yet - try diamond");
+            } else if (s.contains("chain")) {
+                throw new IllegalArgumentException("chainmail armor cannot be crafted in survival - try iron");
+            } else if (s.contains("leather")) {
+                mat = "leather";
+            } else if (s.contains("gold")) {
+                mat = "golden";
+            } else if (s.contains("diamond")) {
+                mat = "diamond";
+            } else if (s.contains("iron")) {
+                mat = "iron";
+            }
+        }
+        return new String[]{"armor", mat};
+    }
+
     /** Turns free text into [verb, args...] understood by TaskFactory. */
     public static String[] normalize(String[] raw) {
         List<String> w = new ArrayList<>();
         for (String s : raw) {
             w.add(s.toLowerCase(Locale.ROOT));
         }
+        String[] basic = basic(w);
+        if (basic != null) {
+            return basic;
+        }
         String head = w.get(0);
-        if (DIRECT.contains(head)) {
+        if (DIRECT.contains(head) && !head.equals("armor")) {
             return w.toArray(String[]::new);
+        }
+        String[] armor = armor(w);
+        if (armor != null) {
+            return armor;
         }
         String verb = "get";
         if (ITEM_VERBS.contains(head)) {
@@ -67,6 +150,14 @@ public final class AIParse {
         for (String tool : List.of("pickaxe", "axe", "shovel", "hoe", "sword")) {
             if (s.equals("wood_" + tool)) {
                 s = "wooden_" + tool;
+            }
+            if (s.equals("gold_" + tool)) {
+                s = "golden_" + tool;
+            }
+        }
+        for (String piece : List.of("helmet", "chestplate", "leggings", "boots")) {
+            if (s.equals("gold_" + piece)) {
+                s = "golden_" + piece;
             }
         }
         return switch (s) {

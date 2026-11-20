@@ -6,12 +6,13 @@ import dev.nullclient.gui.AutoLogin;
 import dev.nullclient.gui.Join;
 import dev.nullclient.gui.MenuScreen;
 import dev.nullclient.gui.Pov;
+import dev.nullclient.gui.ScreenSaver;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
 
-/** Opens and closes the menu ({@link MenuScreen}), finishes pending joins, runs auto login and scripts, and handles hotkeys. */
+/** Opens and closes the menu ({@link MenuScreen}), finishes pending joins, runs auto login, scripts and the screen-off mode, and handles hotkeys. */
 public final class NullUI {
     private final NullClient nc;
     private boolean toggleDown;
@@ -49,12 +50,13 @@ public final class NullUI {
         }
     }
 
-    /** RIGHT SHIFT toggles the menu; END is the panic key that stops every agent, script and macro. */
+    /** RIGHT SHIFT toggles the menu; END is the panic key that stops every agent, script and macro, and wakes the screen. */
     public void pollHotkeys(Minecraft mc) {
         Join.tick(mc);
         AutoLogin.tick(mc);
         Pov.tick(mc);
         ScriptRunner.tick(mc);
+        ScreenSaver.tick(mc, nc);
         if (pendingToggle && (mc.gui.screen() == null || mc.gui.screen() instanceof MenuScreen)) {
             pendingToggle = false;
             toggleNow(mc);
@@ -75,6 +77,7 @@ public final class NullUI {
             nc.ai().cancelAll();
             nc.macros().stopPlayback();
             nc.macros().stopRecording(false);
+            ScreenSaver.wake();
         }
         panicDown = panic;
     }

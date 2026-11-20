@@ -1,5 +1,6 @@
 package dev.nullclient.gui;
 
+import dev.nullclient.core.script.ScriptRunner;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
@@ -136,7 +137,10 @@ public final class MenuScreen extends Screen {
                 ui.iconButton(p.title(), p.title(), x + (i % 2) * (cw + 4), y + (i / 2) * 24, cw, 20, find(p) != null, () -> toggle(p));
             }
             int yy = y + ((PAGES.size() + 1) / 2) * 24 + 6;
-            ui.button("Stop all AI + macros", x, yy, w, 20, () -> Ui.cmd("stopall"));
+            ui.button("Stop all AI + scripts", x, yy, w, 20, () -> {
+                Ui.cmd("stopall");
+                ScriptRunner.stop();
+            });
             ui.button("Close menu", x, yy + 24, w, 20, () -> Minecraft.getInstance().gui.setScreen(null));
         }
     }
